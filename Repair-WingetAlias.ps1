@@ -26,7 +26,10 @@ param (
     [switch]$AsJob,
 
     [Parameter(Mandatory = $false)]
-    [switch]$DownloadFallback
+    [switch]$DownloadFallback,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$ScheduleTask
 )
 
 # Initialize logging function
@@ -213,8 +216,12 @@ function Repair-EnvironmentPath {
     try {
         $regKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
         if (-not $regKey) {
-            Write-Log -Message "Failed to open HKCU:\Environment registry key." -Level "Error"
-            return $false
+            Write-Log -Message "HKCU:\Environment key does not exist. Creating key..." -Level "Warn"
+            if ($PSCmdlet.ShouldProcess("Registry Key HKCU:\Environment", "Create missing Registry Key")) {
+                $regKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
+            } else {
+                return $false
+            }
         }
         
         $currentRawPath = $regKey.GetValue("PATH", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
@@ -263,8 +270,8 @@ function Repair-EnvironmentPath {
             $cleanedPaths.Add($windowsAppsVar)
         }
         
-        # Build new PATH variable
-        $newRawPath = $cleanedPaths -join ";"
+        # Build new PATH variable and normalize trailing/leading semicolons
+        $newRawPath = ($cleanedPaths -join ";").Trim(';')
         Write-Log -Message "Proposed User PATH: $newRawPath" -Level "Info"
         
         # Save backup before writing changes
@@ -457,6 +464,52 @@ function Install-WingetFallback {
     }
 }
 
+# Install unattended background logon task
+function Install-UnattendedTask {
+    $taskName = "Repair-WingetAlias"
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    
+    if ($isAdmin) {
+        Write-Log -Message "Elevated session detected. Attempting to register Windows Scheduled Task..." -Level "Info"
+        if ($PSCmdlet.ShouldProcess("Task Scheduler", "Register Scheduled Task '$taskName' to run at user logon")) {
+            try {
+                $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -Force"
+                $trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME
+                $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+                $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+                $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+                
+                Register-ScheduledTask -TaskName $taskName -InputObject $task -Force | Out-Null
+                Write-Log -Message "Successfully registered Windows Scheduled Task '$taskName'." -Level "Success"
+            } catch {
+                Write-Log -Message "Failed to register scheduled task: $_. Falling back to User Startup folder shortcut..." -Level "Warn"
+                $isAdmin = $false
+            }
+        }
+    }
+    
+    if (-not $isAdmin) {
+        Write-Log -Message "Creating User Startup folder shortcut for non-elevated deployment..." -Level "Info"
+        $startupFolder = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Startup)
+        $shortcutPath = Join-Path $startupFolder "$taskName.lnk"
+        
+        if ($PSCmdlet.ShouldProcess("Startup Shortcut $shortcutPath", "Create shortcut to execute script on logon")) {
+            try {
+                $wshShell = New-Object -ComObject WScript.Shell
+                $shortcut = $wshShell.CreateShortcut($shortcutPath)
+                $shortcut.TargetPath = "powershell.exe"
+                $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -Force"
+                $shortcut.Description = "Automated Winget Execution Alias Repair"
+                $shortcut.WorkingDirectory = $PSScriptRoot
+                $shortcut.Save()
+                Write-Log -Message "Successfully created startup shortcut at: $shortcutPath" -Level "Success"
+            } catch {
+                Write-Log -Message "Failed to create startup shortcut: $_" -Level "Error"
+            }
+        }
+    }
+}
+
 # Run full diagnostic suite
 function Run-Diagnostics {
     Write-Log -Message "==================================================" -Level "Info"
@@ -528,6 +581,26 @@ function Run-Diagnostics {
         Write-Log -Message "  - Status: $($pkg.Status)" -Level "Info"
     } else {
         Write-Log -Message "AppX Package Check: Microsoft.DesktopAppInstaller is MISSING!" -Level "Error"
+    }
+
+    # Dependency Auditing
+    Write-Log -Message "Auditing AppX Package core dependencies..." -Level "Info"
+    $vclibs = Get-AppxPackage -Name "*VCLibs.140.00.UWPDesktop*" -ErrorAction SilentlyContinue
+    if ($vclibs) {
+        Write-Log -Message "Dependency Check: VCLibs UWPDesktop is installed ($($vclibs[0].Version))." -Level "Success"
+    } else {
+        Write-Log -Message "Dependency Check: VCLibs UWPDesktop is MISSING! Re-registration might fail." -Level "Warn"
+    }
+    $uixaml = Get-AppxPackage -Name "*UI.Xaml.2.8*" -ErrorAction SilentlyContinue
+    if ($uixaml) {
+        Write-Log -Message "Dependency Check: Microsoft.UI.Xaml.2.8 is installed ($($uixaml[0].Version))." -Level "Success"
+    } else {
+        $anyxaml = Get-AppxPackage -Name "*UI.Xaml*" -ErrorAction SilentlyContinue
+        if ($anyxaml) {
+            Write-Log -Message "Dependency Check: Microsoft.UI.Xaml 2.8 is missing, but other UI.Xaml packages are installed." -Level "Warn"
+        } else {
+            Write-Log -Message "Dependency Check: Microsoft.UI.Xaml is completely MISSING! DesktopAppInstaller will fail to launch." -Level "Error"
+        }
     }
     
     # 4. Alias files check
@@ -770,6 +843,12 @@ function Show-InteractiveMenu {
 
 try {
     Start-ScriptTranscript
+
+    # Handle unattended background logon task switch
+    if ($ScheduleTask) {
+        Install-UnattendedTask
+        exit
+    }
 
     # Handle background execution switch
     if ($AsJob) {
