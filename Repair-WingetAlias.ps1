@@ -65,6 +65,22 @@ function Write-Log {
 # Initialize transcript functions
 function Start-ScriptTranscript {
     $transcriptPath = Join-Path $PSScriptRoot "Repair-WingetAlias_Transcript.log"
+    # Rotate log if larger than 1MB
+    if (Test-Path $transcriptPath) {
+        $fileInfo = Get-Item $transcriptPath
+        if ($fileInfo.Length -gt 1MB) {
+            $backupPath = Join-Path $PSScriptRoot "Repair-WingetAlias_Transcript.bak"
+            try {
+                if (Test-Path $backupPath) {
+                    Remove-Item -Path $backupPath -Force -ErrorAction SilentlyContinue
+                }
+                Rename-Item -Path $transcriptPath -NewName "Repair-WingetAlias_Transcript.bak" -ErrorAction Stop
+                Write-Log -Message "Rotated previous transcript log to .bak format." -Level "Info"
+            } catch {
+                # Skip rotation if log is locked
+            }
+        }
+    }
     Write-Log -Message "Starting transcript logging to: $transcriptPath" -Level "Info"
     try {
         Start-Transcript -Path $transcriptPath -Append -Force -ErrorAction Stop | Out-Null
@@ -121,6 +137,7 @@ public static extern IntPtr SendMessageTimeout(
 # Save double-redundant backups of PATH variable
 function Save-EnvironmentBackup {
     try {
+        $ErrorActionPreference = "Stop"
         $regKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
         if (-not $regKey) {
             Write-Log -Message "Failed to open HKCU:\Environment registry key." -Level "Error"
@@ -166,6 +183,7 @@ Windows Registry Editor Version 5.00
 # Rollback environment variables from backups
 function Restore-EnvironmentBackup {
     try {
+        $ErrorActionPreference = "Stop"
         $regKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
         if (-not $regKey) {
             Write-Log -Message "Failed to open HKCU:\Environment registry key." -Level "Error"
@@ -214,6 +232,7 @@ function Restore-EnvironmentBackup {
 # Repair environment PATH registry variable
 function Repair-EnvironmentPath {
     try {
+        $ErrorActionPreference = "Stop"
         $regKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
         if (-not $regKey) {
             Write-Log -Message "HKCU:\Environment key does not exist. Creating key..." -Level "Warn"
@@ -222,6 +241,16 @@ function Repair-EnvironmentPath {
             } else {
                 return $false
             }
+        }
+        
+        # Security check: verify HKCU:\Environment registry write permissions
+        try {
+            $regKey.SetValue("RepairWingetWriteTest", "Test", [Microsoft.Win32.RegistryValueKind]::String)
+            $regKey.DeleteValue("RepairWingetWriteTest")
+            Write-Log -Message "Security Check: Verified HKCU:\Environment registry write permissions." -Level "Success"
+        } catch {
+            Write-Log -Message "Security Check: Current user lacks write permissions to HKCU:\Environment! Profile registry may be corrupted." -Level "Error"
+            return $false
         }
         
         $currentRawPath = $regKey.GetValue("PATH", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
@@ -362,6 +391,7 @@ function Test-OpenWithLoop {
 
 # Repair AppX Installer Package Registration
 function Repair-AppXInstallerPackage {
+    $ErrorActionPreference = "Stop"
     Write-Log -Message "Running AppX package re-registration for Microsoft.DesktopAppInstaller..." -Level "Info"
     
     # Import AppX module explicitly (required on PowerShell Core 7+)
@@ -415,6 +445,7 @@ function Remove-ReparsePoint {
     if (Test-Path $Path) {
         if ($PSCmdlet.ShouldProcess("File $Path", "Delete execution alias file stub")) {
             try {
+                $ErrorActionPreference = "Stop"
                 # Use .NET API to safely delete reparse point file stubs
                 [System.IO.File]::Delete($Path)
                 Write-Log -Message "Deleted file stub at $Path." -Level "Success"
@@ -437,6 +468,7 @@ function Remove-ReparsePoint {
 
 # Download latest Winget MSIX from GitHub releases page
 function Install-WingetFallback {
+    $ErrorActionPreference = "Stop"
     Write-Log -Message "Initializing offline package downloader..." -Level "Info"
     $downloadUrl = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
     $tempDir = Join-Path $env:TEMP "WingetRepair"
@@ -579,6 +611,14 @@ function Run-Diagnostics {
         Write-Log -Message "AppX Package Check: Microsoft.DesktopAppInstaller is installed." -Level "Success"
         Write-Log -Message "  - Version: $($pkg.Version)" -Level "Info"
         Write-Log -Message "  - Status: $($pkg.Status)" -Level "Info"
+        
+        # Verify physical install folder exists
+        if (Test-Path $pkg.InstallLocation) {
+            Write-Log -Message "AppX Installation Directory Check: Folder exists at $($pkg.InstallLocation)." -Level "Success"
+        } else {
+            $pkgState = "FAIL"
+            Write-Log -Message "AppX Installation Directory Check: Folder is MISSING from $($pkg.InstallLocation)! App registration is corrupted." -Level "Error"
+        }
     } else {
         Write-Log -Message "AppX Package Check: Microsoft.DesktopAppInstaller is MISSING!" -Level "Error"
     }
