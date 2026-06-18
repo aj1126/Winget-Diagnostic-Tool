@@ -59,6 +59,24 @@ function Write-Log {
     Write-Host $logLine -ForegroundColor $color
 }
 
+# Initialize transcript functions
+function Start-ScriptTranscript {
+    $transcriptPath = Join-Path $PSScriptRoot "Repair-WingetAlias_Transcript.log"
+    Write-Log -Message "Starting transcript logging to: $transcriptPath" -Level "Info"
+    try {
+        Start-Transcript -Path $transcriptPath -Append -Force -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Log -Message "Failed to start transcript logging: $_" -Level "Warn"
+    }
+}
+
+function Stop-ScriptTranscript {
+    try {
+        Stop-Transcript | Out-Null
+        Write-Log -Message "Transcript logging stopped." -Level "Info"
+    } catch {}
+}
+
 # Clean/Normalize path entries
 function Get-NormalizedPath {
     param (
@@ -750,41 +768,47 @@ function Show-InteractiveMenu {
 
 # --- SCRIPT MAIN EXECUTION ---
 
-# Handle background execution switch
-if ($AsJob) {
-    Write-Output "Spawning repair script as a background PowerShell Job..."
-    
-    $argsArray = @()
-    if ($Force) { $argsArray += "-Force" }
-    if ($Rollback) { $argsArray += "-Rollback" }
-    if ($DownloadFallback) { $argsArray += "-DownloadFallback" }
-    if ($WhatIfPreference) { $argsArray += "-WhatIf" }
-    
-    $job = Start-Job -FilePath $PSCommandPath -ArgumentList $argsArray
-    Write-Output "Job started successfully. ID: $($job.Id), Name: $($job.Name)"
-    Write-Output "You can check job status using: Get-Job -Id $($job.Id)"
-    Write-Output "Retrieve job logs in real time from: $(Join-Path $PSScriptRoot 'Repair-WingetAlias.log')"
-    exit
-}
+try {
+    Start-ScriptTranscript
 
-# Check for Rollback request
-if ($Rollback) {
-    Write-Log -Message "Rollback switch detected. Commencing restoration..." -Level "Info"
-    Restore-EnvironmentBackup | Out-Null
-    exit
-}
-
-# Check for automatic Force execution
-if ($Force) {
-    Write-Log -Message "Force switch detected. Commencing automatic diagnostics and repairs..." -Level "Info"
-    $needsRepair = Run-Diagnostics
-    if ($needsRepair) {
-        Repair-All
-    } else {
-        Write-Log -Message "All checks passed. No repair necessary." -Level "Success"
+    # Handle background execution switch
+    if ($AsJob) {
+        Write-Output "Spawning repair script as a background PowerShell Job..."
+        
+        $argsArray = @()
+        if ($Force) { $argsArray += "-Force" }
+        if ($Rollback) { $argsArray += "-Rollback" }
+        if ($DownloadFallback) { $argsArray += "-DownloadFallback" }
+        if ($WhatIfPreference) { $argsArray += "-WhatIf" }
+        
+        $job = Start-Job -FilePath $PSCommandPath -ArgumentList $argsArray
+        Write-Output "Job started successfully. ID: $($job.Id), Name: $($job.Name)"
+        Write-Output "You can check job status using: Get-Job -Id $($job.Id)"
+        Write-Output "Retrieve job logs in real time from: $(Join-Path $PSScriptRoot 'Repair-WingetAlias.log')"
+        exit
     }
-    exit
-}
 
-# Otherwise, run interactive menu wizard
-Show-InteractiveMenu
+    # Check for Rollback request
+    if ($Rollback) {
+        Write-Log -Message "Rollback switch detected. Commencing restoration..." -Level "Info"
+        Restore-EnvironmentBackup | Out-Null
+        exit
+    }
+
+    # Check for automatic Force execution
+    if ($Force) {
+        Write-Log -Message "Force switch detected. Commencing automatic diagnostics and repairs..." -Level "Info"
+        $needsRepair = Run-Diagnostics
+        if ($needsRepair) {
+            Repair-All
+        } else {
+            Write-Log -Message "All checks passed. No repair necessary." -Level "Success"
+        }
+        exit
+    }
+
+    # Otherwise, run interactive menu wizard
+    Show-InteractiveMenu
+} finally {
+    Stop-ScriptTranscript
+}
