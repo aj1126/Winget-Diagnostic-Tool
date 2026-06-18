@@ -1,0 +1,5 @@
+# Ignore script logs
+Repair-WingetAlias.log
+
+# Ignore registry backup files
+Repair-WingetAlias_Backup_*.reg
