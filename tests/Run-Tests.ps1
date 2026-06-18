@@ -148,6 +148,51 @@ public class MockWindowsPrincipal {
         return _isAdmin;
     }
 }
+
+public class MockFile {
+    public static Dictionary<string, System.IO.FileAttributes> MockAttributes = new Dictionary<string, System.IO.FileAttributes>(StringComparer.OrdinalIgnoreCase);
+    public static HashSet<string> ForceDeleteFail = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    public static bool Exists(string path) {
+        string fileName = System.IO.Path.GetFileName(path);
+        if (ForceDeleteFail.Contains(fileName)) {
+            return true;
+        }
+        return System.IO.File.Exists(path);
+    }
+
+    public static void Delete(string path) {
+        string fileName = System.IO.Path.GetFileName(path);
+        if (ForceDeleteFail.Contains(fileName)) {
+            throw new System.IO.IOException("Simulated deletion failure");
+        }
+        System.IO.File.Delete(path);
+    }
+
+    public static System.IO.FileAttributes GetAttributes(string path) {
+        string fileName = System.IO.Path.GetFileName(path);
+        if (MockAttributes.ContainsKey(fileName)) {
+            return MockAttributes[fileName];
+        }
+        return System.IO.File.GetAttributes(path);
+    }
+
+    public static void Move(string source, string dest) {
+        System.IO.File.Move(source, dest);
+    }
+
+    public static string ReadAllText(string path) {
+        return System.IO.File.ReadAllText(path);
+    }
+
+    public static void WriteAllText(string path, string content) {
+        System.IO.File.WriteAllText(path, content);
+    }
+
+    public static void WriteAllText(string path, string content, System.Text.Encoding encoding) {
+        System.IO.File.WriteAllText(path, content, encoding);
+    }
+}
 "@
 
 Add-Type -TypeDefinition $csharpCode -ErrorAction Stop
@@ -157,6 +202,7 @@ $ta = [psobject].Assembly.GetType("System.Management.Automation.TypeAccelerators
 $ta::Add("Microsoft.Win32.Registry", [MockRegistry])
 $ta::Add("Security.Principal.WindowsIdentity", [MockWindowsIdentity])
 $ta::Add("Security.Principal.WindowsPrincipal", [MockWindowsPrincipal])
+$ta::Add("System.IO.File", [MockFile])
 
 # Set up globals for mock state
 $global:MockAliasRegistry = New-Object 'System.Collections.Generic.Dictionary[string, System.Collections.Generic.Dictionary[string, object]]' (System.StringComparer::OrdinalIgnoreCase)
@@ -209,6 +255,41 @@ if ($setup.Registry.PATH) {
 }
 if ($setup.Registry.PATH_PreRepairBackup) {
     $envKey.SetValue("PATH_PreRepairBackup", $setup.Registry.PATH_PreRepairBackup)
+}
+
+# Initialize MockFile configuration from setup
+[MockFile]::MockAttributes.Clear()
+[MockFile]::ForceDeleteFail.Clear()
+
+if ($setup.Id -eq 37) {
+    [MockFile]::ForceDeleteFail.Add("winget.exe") | Out-Null
+}
+
+if ($setup.Files) {
+    $winAppsFolder = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+    if (Test-Path $winAppsFolder) {
+        foreach ($file in Get-ChildItem $winAppsFolder) {
+            if ($file.Name -eq "AppxManifest.xml") { continue }
+            if (-not $setup.Files.PSObject.Properties[$file.Name]) {
+                [System.IO.File]::Delete($file.FullName)
+            }
+        }
+    }
+    foreach ($prop in $setup.Files.PSObject.Properties) {
+        $fileName = $prop.Name
+        $fileSetup = $prop.Value
+        if ($fileSetup -ne $null) {
+            $attrs = [System.IO.FileAttributes]::Normal
+            if ($fileSetup.IsReparsePoint) {
+                $attrs = $attrs -bor [System.IO.FileAttributes]::ReparsePoint
+            }
+            if ($fileSetup.IsReadOnly) {
+                $attrs = $attrs -bor [System.IO.FileAttributes]::ReadOnly
+                [MockFile]::ForceDeleteFail.Add($fileName) | Out-Null
+            }
+            [MockFile]::MockAttributes[$fileName] = $attrs
+        }
+    }
 }
 
 # Mock cmdlets functions
@@ -399,6 +480,8 @@ function Start-Process {
     }
     if ($FilePath -eq "cmd.exe" -and $ArgumentList -like "/c del*") {
         $fileToDelete = $ArgumentList -replace '^/c del /f /q\s+"?', '' -replace '"?\s*$', ''
+        $fileName = $fileToDelete -split '\\' -split '/' | Select-Object -Last 1
+        [MockFile]::ForceDeleteFail.Remove($fileName) | Out-Null
         if (Test-Path $fileToDelete) {
             [System.IO.File]::Delete($fileToDelete)
         }
@@ -804,7 +887,6 @@ Add-Test -Id 35 -Tier "Tier 2" -Name "Multiple duplicate registry settings" `
     -Description "Verify duplicate keys are processed safely." `
     -Setup { @{ AliasSettings = @{ 
         "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 0 }
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 0 }
     } } } `
     -Parameters @("-Force") `
     -Assertion { param($state, $exitCode) $state.AliasSettings["Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe"].State -eq 1 }
@@ -979,17 +1061,7 @@ Add-Test -Id 54 -Tier "Tier 3" -Name "Rollback from file backup" `
         } 
     } } `
     -Parameters @("-Rollback") `
-    -Assertion { param($state, $exitCode, $testDir) 
-        # Create a backup file in testDir
-        $backupContent = "Windows Registry Editor Version 5.00`r`n`r`n[HKEY_CURRENT_USER\Environment]`r`n`\"PATH`\"=\\\"C:\\\\Windows\\\\FromFile\\\"`r`n"
-        [System.IO.File]::WriteAllText((Join-Path $testDir "Repair-WingetAlias_Backup_20260618_120000.reg"), $backupContent)
-        # Note: the test runner executes the test and assertions. In the child process:
-        # Since we run the test block, let's look at what the child process does:
-        # Wait, the child process runs the script first, so we should create the backup file BEFORE running it!
-        # Thus, we need to create the backup file in setup!
-        # Let's write the assertion to check if reg.exe import was called.
-        $state.CalledCmdlets -contains "Start-Process: reg.exe import Repair-WingetAlias_Backup_20260618_120000.reg"
-    }
+    -Assertion { param($state, $exitCode) $state.Registry.PATH -eq "C:\Windows\FromFile" }
 
 Add-Test -Id 55 -Tier "Tier 3" -Name "Rollback with no backups" `
     -Description "Verify rollback fails gracefully when no backups exist." `
@@ -1115,9 +1187,14 @@ foreach ($tc in $TestCases) {
     
     # For test 54 specifically, let's create the backup file in setupData's virtual disk
     if ($tc.Id -eq 54) {
-        $backupContent = "Windows Registry Editor Version 5.00`r`n`r`n[HKEY_CURRENT_USER\Environment]`r`n`\"PATH`\"=\\\"C:\\\\Windows\\\\FromFile\\\"`r`n"
+        $backupContent = 'Windows Registry Editor Version 5.00' + "`r`n`r`n" + '[HKEY_CURRENT_USER\Environment]' + "`r`n" + '"PATH"="C:\\Windows\\FromFile"' + "`r`n"
         [System.IO.File]::WriteAllText((Join-Path $testDir "Repair-WingetAlias_Backup_20260618_120000.reg"), $backupContent)
     }
+
+    if ($null -eq $setupData) {
+        $setupData = @{}
+    }
+    $setupData["Id"] = $tc.Id
 
     $setupData | ConvertTo-Json -Depth 5 | Out-File -FilePath (Join-Path $testDir "setup.json") -Encoding utf8
     

@@ -41,9 +41,11 @@ Perform full diagnostic checks and apply all necessary repairs automatically:
 .\Repair-WingetAlias.ps1 -Force
 ```
 
-#### Safe Dry-Run (What-If Mode)
+#### Safe Dry-Run (What-If / Dry-Run Mode)
 Preview registry changes, file deletions, and package registrations without applying any modifications:
 ```powershell
+.\Repair-WingetAlias.ps1 -DryRun
+# Or use standard PowerShell WhatIf support:
 .\Repair-WingetAlias.ps1 -WhatIf -Force
 ```
 
@@ -108,6 +110,7 @@ graph TD
 1. **Safety Registry Operations**: The script directly queries raw Registry values using `.GetValue("PATH", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)` to avoid flattening environment variables during backups.
 2. **Reparse Point Deletion**: Standard PowerShell `Remove-Item` fails on corrupted or orphaned reparse points. The script bypasses this by utilizing .NET's `[System.IO.File]::Delete($Path)`.
 3. **Active Loop Detection**: The script monitors spawned test-executions in a separate background thread with a 3-second timeout. If the process hangs or spawns `OpenWith.exe`, it is flagged as an active execution loop, and the processes are immediately terminated.
+4. **Elevated Targeting of Logged-In User Profile**: When executed in an elevated Administrator session, the script does not default to the Administrator's own profile. Instead, it dynamically resolves the currently active standard user profile by detecting the owner of the `explorer.exe` process or querying `Win32_ComputerSystem.UserName`. It translates their SID to target the correct user hive under `HKEY_USERS\<SID>` and performs file operations in their `%LOCALAPPDATA%`, providing comprehensive remediation coverage for the target user while running elevated.
 
 ---
 
@@ -124,6 +127,7 @@ This section defines specifications for other AI agents to execute, parse, and a
 | `-AsJob` | Switch | `$false` | Spawns the script asynchronously as a background PowerShell Job. |
 | `-DownloadFallback` | Switch | `$false` | Downloads and installs the latest official `.msixbundle` from Microsoft's GitHub if the local package is missing. |
 | `-ScheduleTask` | Switch | `$false` | Installs the logon Scheduled Task or Startup shortcut. |
+| `-DryRun` | Switch | `$false` | Simulates all diagnostic and repair steps without modifying the registry or deleting files. |
 | `-WhatIf` | Switch | `$false` | Standard dry-run parameter (inherits `SupportsShouldProcess`). |
 
 ### Execution Templates
