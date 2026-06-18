@@ -1,6 +1,11 @@
 # Ignore script logs
 Repair-WingetAlias.log
+Repair-WingetAlias.bak
 Repair-WingetAlias_Transcript.log
+Repair-WingetAlias_Transcript.bak
 
 # Ignore registry backup files
 Repair-WingetAlias_Backup_*.reg
+
+# Ignore agent orchestration state
+.agents/
