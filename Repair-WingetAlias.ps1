@@ -496,7 +496,7 @@ function Get-PathFromRegFile {
             return $value
         }
     } catch {
-        Write-Log -Message "Error parsing .reg file $FilePath: $_" -Level "Error"
+        Write-Log -Message "Error parsing .reg file ${FilePath}: $_" -Level "Error"
     }
     return $null
 }
