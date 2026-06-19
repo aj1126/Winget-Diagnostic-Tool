@@ -51,7 +51,9 @@ function Rotate-LogFile {
                 }
                 [System.IO.File]::Move($Path, $BackupPath)
             }
-        } catch {}
+        } catch {
+            $null = $_
+        }
     }
 }
 
@@ -73,7 +75,9 @@ function Write-Log {
     
     try {
         Add-Content -Path $logPath -Value $logLine -ErrorAction SilentlyContinue
-    } catch {}
+    } catch {
+        $null = $_
+    }
     
     $color = "White"
     switch ($Level) {
@@ -131,7 +135,9 @@ function Get-TargetUserAndSid {
                     }
                 }
             }
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to resolve explorer.exe owner: $_" -Level "Warn"
+        }
         
         if ($targetUsername -eq $env:USERNAME -and $currentIdentity.Name -match "Administrator") {
             try {
@@ -145,7 +151,9 @@ function Get-TargetUserAndSid {
                         $targetSid = $sid.Value
                     }
                 }
-            } catch {}
+            } catch {
+                Write-Log -Message "Failed to resolve logged-in user from Win32_ComputerSystem: $_" -Level "Warn"
+            }
         }
     }
     
@@ -174,7 +182,9 @@ function Expand-TargetUserPath {
                 $profilePath = $profileKey.GetValue("ProfileImagePath", $null)
                 $profileKey.Close()
             }
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to resolve profile image path from Registry: $_" -Level "Warn"
+        }
     }
     if ([string]::IsNullOrEmpty($profilePath)) {
         $profilePath = $env:USERPROFILE
@@ -234,7 +244,9 @@ function Get-UserRegistryKey {
         try {
             $key = [Microsoft.Win32.Registry]::Users.OpenSubKey("$($target.Sid)\$SubKeyPath", $Writable)
             if ($key) { return $key }
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to open target user registry key '$SubKeyPath': $_" -Level "Warn"
+        }
     }
     
     try {
@@ -259,7 +271,9 @@ function Get-OrCreateUserRegistryKey {
                 $key = [Microsoft.Win32.Registry]::Users.CreateSubKey("$($target.Sid)\$SubKeyPath")
             }
             if ($key) { return $key }
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to open or create target user registry key '$SubKeyPath': $_" -Level "Warn"
+        }
     }
     
     try {
@@ -392,7 +406,9 @@ function Stop-ScriptTranscript {
     try {
         Stop-Transcript | Out-Null
         Write-Log -Message "Transcript logging stopped." -Level "Info"
-    } catch {}
+    } catch {
+        $null = $_
+    }
 }
 
 # Clean/Normalize path entries
@@ -542,7 +558,9 @@ function Restore-EnvironmentBackup {
                 if ($environmentKey) {
                     try {
                         $environmentKey.DeleteValue("PATH_PreRepairBackup", $false)
-                    } catch {}
+                    } catch {
+                        Write-Log -Message "Failed to delete PATH_PreRepairBackup: $_" -Level "Warn"
+                    }
                     $environmentKey.Close()
                 }
                 
@@ -709,7 +727,9 @@ function Test-OpenWithLoop {
         $loopDetected = $true
         try {
             $proc.Kill()
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to terminate hung winget.exe process: $_" -Level "Warn"
+        }
     }
     
     return $loopDetected
@@ -816,11 +836,14 @@ function Install-WingetFallback {
             try {
                 $tls13Val = [System.Enum]::Parse([System.Net.SecurityProtocolType], 'Tls13')
             } catch {
+                Write-Log -Message "TLS 1.3 enum unavailable on this runtime; using fallback value." -Level "Warn"
                 $tls13Val = 12288
             }
             try {
                 $securityProtocols = $securityProtocols -bor [System.Net.SecurityProtocolType]$tls13Val
-            } catch {}
+            } catch {
+                $null = $_
+            }
             [System.Net.ServicePointManager]::SecurityProtocol = $securityProtocols
             
             Write-Log -Message "Downloading latest release package from GitHub..." -Level "Info"
@@ -1016,7 +1039,9 @@ function Run-Diagnostics {
                 $attrs = [System.IO.File]::GetAttributes($aliasPath)
                 $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
                 $size = [System.IO.FileInfo]::new($aliasPath).Length
-            } catch {}
+            } catch {
+                Write-Log -Message "Failed to retrieve attributes for $aliasPath: $_" -Level "Warn"
+            }
             
             if ($isReparse) {
                 Write-Log -Message "Alias File Check [$alias]: File exists and is a valid Reparse Point." -Level "Success"
@@ -1119,7 +1144,9 @@ function Repair-All {
             try {
                 $attrs = [System.IO.File]::GetAttributes($aliasPath)
                 $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
-            } catch {}
+            } catch {
+                Write-Log -Message "Failed to retrieve attributes for $aliasPath: $_" -Level "Warn"
+            }
             
             if (-not $isReparse) {
                 Write-Log -Message "Corrupted stub file found at $aliasPath (Not a reparse point). Removing..." -Level "Warn"
