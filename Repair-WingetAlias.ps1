@@ -15,6 +15,13 @@
     from the official Microsoft GitHub releases page if it is missing locally.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidTrailingWhitespace", "")]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingWriteHost", "")]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseApprovedVerbs", "")]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseShouldProcessForStateChangingFunctions", "")]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseSingularNouns", "")]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidOverwritingBuiltInCmdlets", "")]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSShouldProcess", "")]
 param (
     [Parameter(Mandatory = $false)]
     [switch]$Rollback,
@@ -35,6 +42,15 @@ param (
     [switch]$DryRun
 )
 
+# Register type accelerators if not present
+$taInstance = [psobject].Assembly.GetType("System.Management.Automation.TypeAccelerators")
+if (-not $taInstance::Get.ContainsKey("WindowsIdentity")) {
+    $taInstance::Add("WindowsIdentity", [System.Security.Principal.WindowsIdentity])
+}
+if (-not $taInstance::Get.ContainsKey("File")) {
+    $taInstance::Add("File", [System.IO.File])
+}
+
 
 # Helper to rotate log files when they exceed 1MB
 function Rotate-LogFile {
@@ -42,14 +58,14 @@ function Rotate-LogFile {
         [string]$Path,
         [string]$BackupPath
     )
-    if ([System.IO.File]::Exists($Path)) {
+    if ([File]::Exists($Path)) {
         try {
             $len = [System.IO.FileInfo]::new($Path).Length
             if ($len -gt 1MB) {
-                if ([System.IO.File]::Exists($BackupPath)) {
-                    [System.IO.File]::Delete($BackupPath)
+                if ([File]::Exists($BackupPath)) {
+                    [File]::Delete($BackupPath)
                 }
-                [System.IO.File]::Move($Path, $BackupPath)
+                [File]::Move($Path, $BackupPath)
             }
         } catch {
             $null = $_
@@ -90,6 +106,18 @@ function Write-Log {
     Write-Host $logLine -ForegroundColor $color
 }
 
+# Safe wrapper around $PSCmdlet.ShouldProcess that handles non-advanced/null contexts gracefully
+function Should-Process {
+    param (
+        [string]$Target,
+        [string]$Action
+    )
+    if ($null -eq $PSCmdlet) {
+        return $true
+    }
+    return $PSCmdlet.ShouldProcess($Target, $Action)
+}
+
 # Interactive detection
 $IsInteractive = [Environment]::UserInteractive -and ($Host.Name -notmatch "Background|Job|NonInteractive") -and ($null -ne $Host.UI)
 
@@ -112,7 +140,7 @@ function Get-TargetUserAndSid {
         return $script:TargetUserAndSidCache
     }
 
-    $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentIdentity = [WindowsIdentity]::GetCurrent()
     $targetUsername = $env:USERNAME
     $targetSid = $currentIdentity.User.Value
     
@@ -177,7 +205,7 @@ function Expand-TargetUserPath {
     $profilePath = ""
     if ($target.IsAdmin) {
         try {
-            $profileKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($target.Sid)")
+            $profileKey = [Registry]::LocalMachine.OpenSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($target.Sid)")
             if ($profileKey) {
                 $profilePath = $profileKey.GetValue("ProfileImagePath", $null)
                 $profileKey.Close()
@@ -207,7 +235,7 @@ function Get-TargetUserLocalFolder {
     
     if ($target.IsAdmin) {
         try {
-            $profileKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($target.Sid)")
+            $profileKey = [Registry]::LocalMachine.OpenSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($target.Sid)")
             if ($profileKey) {
                 $profilePath = $profileKey.GetValue("ProfileImagePath", $null)
                 $profileKey.Close()
@@ -242,7 +270,7 @@ function Get-UserRegistryKey {
     $target = Get-TargetUserAndSid
     if ($target.IsAdmin) {
         try {
-            $key = [Microsoft.Win32.Registry]::Users.OpenSubKey("$($target.Sid)\$SubKeyPath", $Writable)
+            $key = [Registry]::Users.OpenSubKey("$($target.Sid)\$SubKeyPath", $Writable)
             if ($key) { return $key }
         } catch {
             Write-Log -Message "Failed to open target user registry key '$SubKeyPath': $_" -Level "Warn"
@@ -250,7 +278,7 @@ function Get-UserRegistryKey {
     }
     
     try {
-        return [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKeyPath, $Writable)
+        return [Registry]::CurrentUser.OpenSubKey($SubKeyPath, $Writable)
     } catch {
         return $null
     }
@@ -266,9 +294,9 @@ function Get-OrCreateUserRegistryKey {
     $target = Get-TargetUserAndSid
     if ($target.IsAdmin) {
         try {
-            $key = [Microsoft.Win32.Registry]::Users.OpenSubKey("$($target.Sid)\$SubKeyPath", $Writable)
+            $key = [Registry]::Users.OpenSubKey("$($target.Sid)\$SubKeyPath", $Writable)
             if (-not $key) {
-                $key = [Microsoft.Win32.Registry]::Users.CreateSubKey("$($target.Sid)\$SubKeyPath")
+                $key = [Registry]::Users.CreateSubKey("$($target.Sid)\$SubKeyPath")
             }
             if ($key) { return $key }
         } catch {
@@ -277,9 +305,9 @@ function Get-OrCreateUserRegistryKey {
     }
     
     try {
-        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKeyPath, $Writable)
+        $key = [Registry]::CurrentUser.OpenSubKey($SubKeyPath, $Writable)
         if (-not $key) {
-            $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($SubKeyPath)
+            $key = [Registry]::CurrentUser.CreateSubKey($SubKeyPath)
         }
         return $key
     } catch {
@@ -339,7 +367,7 @@ function Test-UserRegistryKey {
 # Safe user/machine merged PATH session refresher
 function Update-SessionPath {
     try {
-        $machineKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("System\CurrentControlSet\Control\Session Manager\Environment")
+        $machineKey = [Registry]::LocalMachine.OpenSubKey("System\CurrentControlSet\Control\Session Manager\Environment")
         $machinePath = ""
         if ($machineKey) {
             $machinePath = $machineKey.GetValue("PATH", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
@@ -461,7 +489,7 @@ function Save-EnvironmentBackup {
         }
         
         # 1. Registry backup key
-        if ($PSCmdlet.ShouldProcess("Registry Key HKCU:\Environment", "Create backup registry value 'PATH_PreRepairBackup'")) {
+        if (Should-Process -Target "Registry Key HKCU:\Environment" -Action "Create backup registry value 'PATH_PreRepairBackup'") {
             $backupSuccess = Set-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH_PreRepairBackup" -Value $currentRawPath -ValueKind ExpandString
             if ($backupSuccess) {
                 Write-Log -Message "Saved path backup to registry key 'PATH_PreRepairBackup'." -Level "Success"
@@ -476,7 +504,7 @@ function Save-EnvironmentBackup {
         $regFileName = "Repair-WingetAlias_Backup_$timestamp.reg"
         $regFilePath = Join-Path $PSScriptRoot $regFileName
         
-        if ($PSCmdlet.ShouldProcess("File $regFilePath", "Export environment backup as .reg file")) {
+        if (Should-Process -Target "File $regFilePath" -Action "Export environment backup as .reg file") {
             # Registry paths require backslash escaping
             $escapedPath = $currentRawPath.Replace('\', '\\').Replace('"', '\"')
             $target = Get-TargetUserAndSid
@@ -487,7 +515,7 @@ Windows Registry Editor Version 5.00
 [$regKeyPath]
 "PATH"="$escapedPath"
 "@
-            [System.IO.File]::WriteAllText($regFilePath, $regContent, [System.Text.Encoding]::Unicode)
+            [File]::WriteAllText($regFilePath, $regContent, [System.Text.Encoding]::Unicode)
             Write-Log -Message "Exported redundant registry backup file to: $regFilePath" -Level "Success"
         }
         return $true
@@ -503,7 +531,7 @@ function Get-PathFromRegFile {
         [string]$FilePath
     )
     try {
-        $content = [System.IO.File]::ReadAllText($FilePath)
+        $content = [File]::ReadAllText($FilePath)
         # Find PATH line and extract the value
         if ($content -match '(?m)^"PATH"="(.+)"\s*$') {
             $value = $Matches[1]
@@ -512,7 +540,7 @@ function Get-PathFromRegFile {
             return $value
         }
     } catch {
-        Write-Log -Message "Error parsing .reg file $FilePath: $_" -Level "Error"
+        Write-Log -Message "Error parsing .reg file ${FilePath}: $_" -Level "Error"
     }
     return $null
 }
@@ -531,7 +559,7 @@ function Restore-EnvironmentBackup {
                 $latestFile = $backupFiles[0]
                 Write-Log -Message "Found backup file: $($latestFile.Name) (Last Modified: $($latestFile.LastWriteTime))" -Level "Info"
                 
-                if ($PSCmdlet.ShouldProcess("Registry Import", "Restore registry from backup file $($latestFile.FullName)")) {
+                if (Should-Process -Target "Registry Import" -Action "Restore registry from backup file $($latestFile.FullName)") {
                     $restoredPath = Get-PathFromRegFile -FilePath $latestFile.FullName
                     if (-not [string]::IsNullOrEmpty($restoredPath)) {
                         Set-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -Value $restoredPath -ValueKind ExpandString
@@ -550,7 +578,7 @@ function Restore-EnvironmentBackup {
             }
         } else {
             Write-Log -Message "Found registry backup value: $backupPath" -Level "Info"
-            if ($PSCmdlet.ShouldProcess("Registry Key HKCU:\Environment", "Restore PATH from 'PATH_PreRepairBackup'")) {
+            if (Should-Process -Target "Registry Key HKCU:\Environment" -Action "Restore PATH from 'PATH_PreRepairBackup'") {
                 Set-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -Value $backupPath -ValueKind ExpandString
                 
                 # Delete backup value using .NET registry key
@@ -599,7 +627,6 @@ function Repair-EnvironmentPath {
         
         $currentRawPath = Get-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -DefaultValue ""
         $windowsAppsVar = "%LOCALAPPDATA%\Microsoft\WindowsApps"
-        $windowsAppsAbs = "$TargetLocalAppData\Microsoft\WindowsApps"
         
         $paths = @()
         if (-not [string]::IsNullOrEmpty($currentRawPath)) {
@@ -654,7 +681,7 @@ function Repair-EnvironmentPath {
         }
         
         # Apply repair
-        if ($PSCmdlet.ShouldProcess("Registry Key HKCU:\Environment", "Update PATH value to: $newRawPath")) {
+        if (Should-Process -Target "Registry Key HKCU:\Environment" -Action "Update PATH value to: $newRawPath") {
             Set-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -Value $newRawPath -ValueKind ExpandString
             Update-SessionPath
             Broadcast-EnvironmentUpdate
@@ -671,7 +698,7 @@ function Repair-EnvironmentPath {
 function Test-OpenWithLoop {
     Write-Log -Message "Testing for active Winget Open With loop..." -Level "Info"
     $wingetPath = "$TargetLocalAppData\Microsoft\WindowsApps\winget.exe"
-    if (-not [System.IO.File]::Exists($wingetPath)) {
+    if (-not [File]::Exists($wingetPath)) {
         Write-Log -Message "winget.exe alias does not exist at $wingetPath. Cannot perform execution check." -Level "Warn"
         return $false
     }
@@ -757,13 +784,13 @@ function Repair-AppXInstallerPackage {
     }
     
     $manifestPath = Join-Path $pkg.InstallLocation "AppxManifest.xml"
-    if (-not [System.IO.File]::Exists($manifestPath)) {
+    if (-not [File]::Exists($manifestPath)) {
         Write-Log -Message "Package manifest not found at: $manifestPath" -Level "Error"
         return $false
     }
     
     # Re-register package
-    if ($PSCmdlet.ShouldProcess("AppX Package $($pkg.PackageFullName)", "Re-register AppX package")) {
+    if (Should-Process -Target "AppX Package $($pkg.PackageFullName)" -Action "Re-register AppX package") {
         try {
             Add-AppxPackage -DisableDevelopmentMode -Register $manifestPath -ForceApplicationShutdown -ErrorAction Stop
             Write-Log -Message "Successfully re-registered AppX package." -Level "Success"
@@ -775,7 +802,7 @@ function Repair-AppXInstallerPackage {
     
     # Reset package (clears corrupt user state data, Win 10/11)
     if (Get-Command "Reset-AppxPackage" -ErrorAction SilentlyContinue) {
-        if ($PSCmdlet.ShouldProcess("AppX Package $($pkg.PackageFullName)", "Reset AppX package data")) {
+        if (Should-Process -Target "AppX Package $($pkg.PackageFullName)" -Action "Reset AppX package data") {
             try {
                 Reset-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
                 Write-Log -Message "Successfully completed package app reset." -Level "Success"
@@ -793,18 +820,18 @@ function Remove-ReparsePoint {
     param (
         [string]$Path
     )
-    if ([System.IO.File]::Exists($Path)) {
-        if ($PSCmdlet.ShouldProcess("File $Path", "Delete execution alias file stub")) {
+    if ([File]::Exists($Path)) {
+        if (Should-Process -Target "File $Path" -Action "Delete execution alias file stub") {
             try {
                 $ErrorActionPreference = "Stop"
                 # Use .NET API to safely delete reparse point file stubs
-                [System.IO.File]::Delete($Path)
+                [File]::Delete($Path)
                 Write-Log -Message "Deleted file stub at $Path." -Level "Success"
             } catch {
                 Write-Log -Message "Failed to delete $Path using .NET API. Attempting cmd fallback..." -Level "Warn"
                 try {
                     Start-Process cmd.exe -ArgumentList "/c del /f /q `"$Path`"" -NoNewWindow -Wait
-                    if ([System.IO.File]::Exists($Path)) {
+                    if ([File]::Exists($Path)) {
                         Write-Log -Message "Failed to delete $Path using cmd fallback." -Level "Error"
                     } else {
                         Write-Log -Message "Deleted file stub at $Path via cmd fallback." -Level "Success"
@@ -828,7 +855,7 @@ function Install-WingetFallback {
     }
     $destFile = Join-Path $tempDir "Microsoft.DesktopAppInstaller.msixbundle"
     
-    if ($PSCmdlet.ShouldProcess("Internet Download", "Download from $downloadUrl to $destFile")) {
+    if (Should-Process -Target "Internet Download" -Action "Download from $downloadUrl to $destFile") {
         try {
             # Force secure TLS Protocols (resolve Tls13 dynamically to support older .NET runtimes)
             $securityProtocols = [System.Net.SecurityProtocolType]::Tls12
@@ -871,7 +898,7 @@ function Install-UnattendedTask {
     
     if ($isAdmin) {
         Write-Log -Message "Elevated session detected. Attempting to register Windows Scheduled Task..." -Level "Info"
-        if ($PSCmdlet.ShouldProcess("Task Scheduler", "Register Scheduled Task '$taskName' to run at user logon")) {
+        if (Should-Process -Target "Task Scheduler" -Action "Register Scheduled Task '$taskName' to run at user logon") {
             try {
                 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -Force"
                 $trigger = New-ScheduledTaskTrigger -AtLogon -User $target.Username
@@ -896,10 +923,13 @@ function Install-UnattendedTask {
         } else {
             $startupFolder = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Startup)
         }
+        if ([string]::IsNullOrEmpty($startupFolder)) {
+            $startupFolder = Join-Path $env:USERPROFILE "AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+        }
         $shortcutPath = Join-Path $startupFolder "$taskName.lnk"
         
         $shortcutCreated = $false
-        if ($PSCmdlet.ShouldProcess("Startup Shortcut $shortcutPath", "Create shortcut to execute script on logon")) {
+        if (Should-Process -Target "Startup Shortcut $shortcutPath" -Action "Create shortcut to execute script on logon") {
             try {
                 $wshShell = New-Object -ComObject WScript.Shell
                 $shortcut = $wshShell.CreateShortcut($shortcutPath)
@@ -1031,16 +1061,16 @@ function Run-Diagnostics {
     $aliases = @("winget.exe", "wingetdev.exe")
     foreach ($alias in $aliases) {
         $aliasPath = Join-Path $dirPath $alias
-        $exists = [System.IO.File]::Exists($aliasPath)
+        $exists = [File]::Exists($aliasPath)
         if ($exists) {
             $isReparse = $false
             $size = 0
             try {
-                $attrs = [System.IO.File]::GetAttributes($aliasPath)
+                $attrs = [File]::GetAttributes($aliasPath)
                 $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
                 $size = [System.IO.FileInfo]::new($aliasPath).Length
             } catch {
-                Write-Log -Message "Failed to retrieve attributes for $aliasPath: $_" -Level "Warn"
+                Write-Log -Message "Failed to retrieve attributes for ${aliasPath}: $_" -Level "Warn"
             }
             
             if ($isReparse) {
@@ -1065,9 +1095,18 @@ function Run-Diagnostics {
         $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
         if (Test-UserRegistryKey -SubKeyPath $subKey) {
             $state = Get-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -DefaultValue $null
-            if ($state -eq 0) {
+            $isStateEnabled = $false
+            if ($null -ne $state) {
+                $stateInt = 0
+                if ([int]::TryParse($state, [ref]$stateInt)) {
+                    if ($stateInt -ne 0) {
+                        $isStateEnabled = $true
+                    }
+                }
+            }
+            if (-not $isStateEnabled) {
                 $settingsState = "FAIL"
-                Write-Log -Message "Alias Setting [$aliasKey]: DISABLED in registry (State = 0)!" -Level "Error"
+                Write-Log -Message "Alias Setting [$aliasKey]: DISABLED or invalid in registry (State = $state)!" -Level "Error"
             } else {
                 Write-Log -Message "Alias Setting [$aliasKey]: Enabled/Default (State = $state)." -Level "Success"
             }
@@ -1108,7 +1147,7 @@ function Repair-All {
     # Ensure WindowsApps folder exists
     $dirPath = "$TargetLocalAppData\Microsoft\WindowsApps"
     if (-not (Test-Path $dirPath)) {
-        if ($PSCmdlet.ShouldProcess("Directory $dirPath", "Create missing WindowsApps folder")) {
+        if (Should-Process -Target "Directory $dirPath" -Action "Create missing WindowsApps folder") {
             New-Item -ItemType Directory -Path $dirPath -Force | Out-Null
             Write-Log -Message "Created folder at $dirPath." -Level "Success"
         }
@@ -1124,8 +1163,17 @@ function Repair-All {
         $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
         if (Test-UserRegistryKey -SubKeyPath $subKey) {
             $state = Get-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -DefaultValue $null
-            if ($state -eq 0) {
-                if ($PSCmdlet.ShouldProcess("Registry Key HKCU:\$subKey", "Set State = 1 (Enable alias)")) {
+            $isStateEnabled = $false
+            if ($null -ne $state) {
+                $stateInt = 0
+                if ([int]::TryParse($state, [ref]$stateInt)) {
+                    if ($stateInt -ne 0) {
+                        $isStateEnabled = $true
+                    }
+                }
+            }
+            if (-not $isStateEnabled) {
+                if (Should-Process -Target "Registry Key HKCU:\$subKey" -Action "Set State = 1 (Enable alias)") {
                     Set-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -Value 1 -ValueKind DWord
                     Write-Log -Message "Re-enabled alias settings for $aliasKey." -Level "Success"
                 }
@@ -1138,14 +1186,14 @@ function Repair-All {
     $aliases = @("winget.exe", "wingetdev.exe")
     foreach ($alias in $aliases) {
         $aliasPath = Join-Path $dirPath $alias
-        $exists = [System.IO.File]::Exists($aliasPath)
+        $exists = [File]::Exists($aliasPath)
         if ($exists) {
             $isReparse = $false
             try {
-                $attrs = [System.IO.File]::GetAttributes($aliasPath)
+                $attrs = [File]::GetAttributes($aliasPath)
                 $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
             } catch {
-                Write-Log -Message "Failed to retrieve attributes for $aliasPath: $_" -Level "Warn"
+                Write-Log -Message "Failed to retrieve attributes for ${aliasPath}: $_" -Level "Warn"
             }
             
             if (-not $isReparse) {
@@ -1249,7 +1297,7 @@ function Show-InteractiveMenu {
                 foreach ($aliasKey in $aliasKeys) {
                     $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
                     if (Test-UserRegistryKey -SubKeyPath $subKey) {
-                        if ($PSCmdlet.ShouldProcess("Registry Key HKCU:\$subKey", "Set State = 1 (Enable alias)")) {
+                        if (Should-Process -Target "Registry Key HKCU:\$subKey" -Action "Set State = 1 (Enable alias)") {
                             Set-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -Value 1 -ValueKind DWord
                             Write-Log -Message "Enabled alias setting $aliasKey." -Level "Success"
                         }
@@ -1309,9 +1357,8 @@ try {
         if ($WhatIfPreference) { $jobParams['WhatIf'] = $true }
         
         $job = Start-Job -ScriptBlock {
-            param($scriptPath, $params)
-            & $scriptPath @params
-        } -ArgumentList $PSCommandPath, $jobParams
+            & $using:PSCommandPath @using:jobParams
+        }
         Write-Output "Job started successfully. ID: $($job.Id), Name: $($job.Name)"
         Write-Output "You can check job status using: Get-Job -Id $($job.Id)"
         Write-Output "Retrieve job logs in real time from: $(Join-Path $PSScriptRoot 'Repair-WingetAlias.log')"

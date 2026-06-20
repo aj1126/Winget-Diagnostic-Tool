@@ -61,8 +61,12 @@ using System.Collections.Generic;
 
 public class MockRegistry {
     public static MockRegistryKey CurrentUser { get; set; }
+    public static MockRegistryKey Users { get; set; }
+    public static MockRegistryKey LocalMachine { get; set; }
     static MockRegistry() {
         CurrentUser = new MockRegistryKey();
+        Users = new MockRegistryKey();
+        LocalMachine = new MockRegistryKey();
     }
 }
 
@@ -77,10 +81,17 @@ public class MockRegistryKey {
     }
 
     public MockRegistryKey OpenSubKey(string name, bool writable) {
-        if (SubKeys.ContainsKey(name)) {
-            return SubKeys[name];
+        if (string.IsNullOrEmpty(name)) return this;
+        string[] parts = name.Split(new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+        MockRegistryKey current = this;
+        foreach (string part in parts) {
+            if (current.SubKeys.ContainsKey(part)) {
+                current = current.SubKeys[part];
+            } else {
+                return null;
+            }
         }
-        return null;
+        return current;
     }
 
     public MockRegistryKey OpenSubKey(string name) {
@@ -88,10 +99,16 @@ public class MockRegistryKey {
     }
 
     public MockRegistryKey CreateSubKey(string name) {
-        if (!SubKeys.ContainsKey(name)) {
-            SubKeys[name] = new MockRegistryKey() { Name = name };
+        if (string.IsNullOrEmpty(name)) return this;
+        string[] parts = name.Split(new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+        MockRegistryKey current = this;
+        foreach (string part in parts) {
+            if (!current.SubKeys.ContainsKey(part)) {
+                current.SubKeys[part] = new MockRegistryKey() { Name = part };
+            }
+            current = current.SubKeys[part];
         }
-        return SubKeys[name];
+        return current;
     }
 
     public object GetValue(string name) {
@@ -130,9 +147,37 @@ public class MockRegistryKey {
             throw new Exception("Value not found");
         }
     }
+
+    public void Close() {
+        // no-op
+    }
+}
+
+public class MockClaim {
+    public string Value { get; set; }
+    public MockClaim(string val) {
+        Value = val;
+    }
+}
+
+public class MockUser {
+    public string Value { get; set; }
+    public MockUser() {
+        Value = "S-1-5-21-Mock-Sid-12345";
+    }
 }
 
 public class MockWindowsIdentity {
+    public MockUser User { get; set; }
+    public System.Collections.Generic.List<MockClaim> Claims { get; set; }
+    public MockWindowsIdentity() {
+        User = new MockUser();
+        Claims = new System.Collections.Generic.List<MockClaim>();
+        string adminEnv = Environment.GetEnvironmentVariable("MOCK_IS_ADMIN");
+        if (adminEnv == "true") {
+            Claims.Add(new MockClaim("S-1-5-32-544"));
+        }
+    }
     public static MockWindowsIdentity GetCurrent() {
         return new MockWindowsIdentity();
     }
@@ -200,12 +245,15 @@ Add-Type -TypeDefinition $csharpCode -ErrorAction Stop
 # Override type accelerators
 $ta = [psobject].Assembly.GetType("System.Management.Automation.TypeAccelerators")
 $ta::Add("Microsoft.Win32.Registry", [MockRegistry])
+$ta::Add("Registry", [MockRegistry])
 $ta::Add("Security.Principal.WindowsIdentity", [MockWindowsIdentity])
+$ta::Add("WindowsIdentity", [MockWindowsIdentity])
 $ta::Add("Security.Principal.WindowsPrincipal", [MockWindowsPrincipal])
 $ta::Add("System.IO.File", [MockFile])
+$ta::Add("File", [MockFile])
 
 # Set up globals for mock state
-$global:MockAliasRegistry = New-Object 'System.Collections.Generic.Dictionary[string, System.Collections.Generic.Dictionary[string, object]]' (System.StringComparer::OrdinalIgnoreCase)
+$global:MockAliasRegistry = New-Object 'System.Collections.Generic.Dictionary[string, System.Collections.Generic.Dictionary[string, object]]' ([System.StringComparer]::OrdinalIgnoreCase)
 $global:MockAppxPackages = New-Object System.Collections.ArrayList
 $global:CalledCmdlets = New-Object System.Collections.Generic.List[string]
 $global:SimulateOpenWithLoop = $setup.OpenWithLoop
@@ -217,12 +265,21 @@ if ($setup.AliasSettings) {
     foreach ($prop in $setup.AliasSettings.PSObject.Properties) {
         $key = $prop.Name
         $val = $prop.Value
-        $global:MockAliasRegistry[$key] = New-Object 'System.Collections.Generic.Dictionary[string, object]' (System.StringComparer::OrdinalIgnoreCase)
+        $global:MockAliasRegistry[$key] = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
+        
+        $regKeyPath = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$key"
+        $mockKey = [MockRegistry]::CurrentUser.CreateSubKey($regKeyPath)
+        
         if ($val -ne $null) {
+            $stateVal = $null
             if ($val.PSObject.Properties["State"]) {
-                $global:MockAliasRegistry[$key]["State"] = $val.State
+                $stateVal = $val.State
             } else {
-                $global:MockAliasRegistry[$key]["State"] = $val
+                $stateVal = $val
+            }
+            $global:MockAliasRegistry[$key]["State"] = $stateVal
+            if ($null -ne $stateVal) {
+                $mockKey.SetValue("State", [int]$stateVal)
             }
         }
     }
@@ -297,8 +354,7 @@ function Get-ItemPropertyValue {
     param(
         [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
         [string]$Path,
-        [string]$Name,
-        $ErrorAction
+        [string]$Name
     )
     $global:CalledCmdlets.Add("Get-ItemPropertyValue: $Path - $Name")
     if ($Path -like "*AppExecutionAliasSettings*") {
@@ -322,8 +378,7 @@ function Set-ItemProperty {
         [string]$Path,
         [string]$Name,
         $Value,
-        [switch]$Force,
-        $ErrorAction
+        [switch]$Force
     )
     $global:CalledCmdlets.Add("Set-ItemProperty: $Path - $Name = $Value")
     if ($Path -like "*AppExecutionAliasSettings*") {
@@ -331,7 +386,7 @@ function Set-ItemProperty {
         if ($subPath.StartsWith("HKCU:\")) { $subPath = $subPath.Substring(6) }
         if ($subPath.StartsWith("HKCU:")) { $subPath = $subPath.Substring(5) }
         if (-not $global:MockAliasRegistry.ContainsKey($subPath)) {
-            $global:MockAliasRegistry[$subPath] = New-Object 'System.Collections.Generic.Dictionary[string, object]' (System.StringComparer::OrdinalIgnoreCase)
+            $global:MockAliasRegistry[$subPath] = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
         }
         $global:MockAliasRegistry[$subPath][$Name] = $Value
         return
@@ -342,8 +397,7 @@ function Set-ItemProperty {
 function Test-Path {
     param(
         [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
-        [string]$Path,
-        $ErrorAction
+        [string]$Path
     )
     $global:CalledCmdlets.Add("Test-Path: $Path")
     if ($Path -like "*AppExecutionAliasSettings*") {
@@ -358,8 +412,7 @@ function Test-Path {
 # AppX Cmdlets
 function Get-AppxPackage {
     param(
-        [string]$Name,
-        $ErrorAction
+        [string]$Name
     )
     $global:CalledCmdlets.Add("Get-AppxPackage: $Name")
     $matched = @()
@@ -378,8 +431,7 @@ function Add-AppxPackage {
         [switch]$DisableDevelopmentMode,
         [string]$Register,
         [switch]$ForceApplicationShutdown,
-        [string]$Path,
-        $ErrorAction
+        [string]$Path
     )
     $argsStr = ""
     if ($Register) { $argsStr += " -Register $Register" }
@@ -403,8 +455,7 @@ function Add-AppxPackage {
 
 function Reset-AppxPackage {
     param(
-        [string]$Package,
-        $ErrorAction
+        [string]$Package
     )
     $global:CalledCmdlets.Add("Reset-AppxPackage: $Package")
     if ($global:ResetAppxPackageFail) {
@@ -416,10 +467,13 @@ function Invoke-WebRequest {
     param(
         [string]$Uri,
         [string]$OutFile,
-        [switch]$UseBasicParsing,
-        $ErrorAction
+        [switch]$UseBasicParsing
     )
-    $global:CalledCmdlets.Add("Invoke-WebRequest: $Uri -> $OutFile")
+    $normalizedOutFile = $OutFile
+    if ($OutFile -like "*WingetRepair*") {
+        $normalizedOutFile = "Temp\WingetRepair\Microsoft.DesktopAppInstaller.msixbundle"
+    }
+    $global:CalledCmdlets.Add("Invoke-WebRequest: $Uri -> $normalizedOutFile")
     if ($global:MockDownloadFail) {
         throw "Download failed (simulated)"
     }
@@ -428,8 +482,7 @@ function Invoke-WebRequest {
 
 function Get-Process {
     param(
-        [string]$Name,
-        $ErrorAction
+        [string]$Name
     )
     $global:CalledCmdlets.Add("Get-Process: $Name")
     if ($Name -eq "OpenWith") {
@@ -448,8 +501,7 @@ function Stop-Process {
     param(
         [Parameter(ValueFromPipeline = $true)]
         $InputObject,
-        [switch]$Force,
-        $ErrorAction
+        [switch]$Force
     )
     if ($InputObject -and $InputObject.Name -eq "OpenWith") {
         $global:CalledCmdlets.Add("Stop-Process: OpenWith")
@@ -466,7 +518,11 @@ function Start-Process {
         [switch]$Wait,
         [switch]$NoNewWindow
     )
-    $global:CalledCmdlets.Add("Start-Process: $FilePath $ArgumentList")
+    $normalizedArgList = $ArgumentList
+    if ($ArgumentList -like "*LocalAppData\Microsoft\WindowsApps*") {
+        $normalizedArgList = $ArgumentList -replace '[A-Z]:\\.*\\TestCase_\d+\\LocalAppData', 'LocalAppData'
+    }
+    $global:CalledCmdlets.Add("Start-Process: $FilePath $normalizedArgList")
     if ($FilePath -eq "reg.exe" -and $ArgumentList -like "import*") {
         $regFile = $ArgumentList -replace '^import\s+"?', '' -replace '"?\s*$', ''
         if (Test-Path $regFile) {
@@ -479,7 +535,8 @@ function Start-Process {
         return
     }
     if ($FilePath -eq "cmd.exe" -and $ArgumentList -like "/c del*") {
-        $fileToDelete = $ArgumentList -replace '^/c del /f /q\s+"?', '' -replace '"?\s*$', ''
+        $fileToDelete = $ArgumentList -replace '^/c del /f /q\s+', ''
+        $fileToDelete = $fileToDelete -replace '\\?"', ''
         $fileName = $fileToDelete -split '\\' -split '/' | Select-Object -Last 1
         [MockFile]::ForceDeleteFail.Remove($fileName) | Out-Null
         if (Test-Path $fileToDelete) {
@@ -586,6 +643,7 @@ try {
 } catch {
     $global:CalledCmdlets.Add("Exception: $_")
 } finally {
+    $WhatIfPreference = $false
     $finalState = @{
         Registry = @{
             PATH = $envKey.GetValue("PATH")
@@ -597,7 +655,14 @@ try {
     }
     
     foreach ($key in $global:MockAliasRegistry.Keys) {
-        $finalState.AliasSettings[$key] = $global:MockAliasRegistry[$key]
+        $regKeyPath = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$key"
+        $mockKey = [MockRegistry]::CurrentUser.OpenSubKey($regKeyPath)
+        if ($mockKey) {
+            $stateVal = $mockKey.GetValue("State")
+            $finalState.AliasSettings[$key] = @{ State = $stateVal }
+        } else {
+            $finalState.AliasSettings[$key] = $null
+        }
     }
     
     $winAppsPath = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
@@ -1218,8 +1283,8 @@ foreach ($tc in $TestCases) {
     $psi.WorkingDirectory = $testDir
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
+    $psi.RedirectStandardOutput = $false
+    $psi.RedirectStandardError = $false
     
     # Rebuild argument string correctly
     $escapedArgs = @()
@@ -1234,6 +1299,8 @@ foreach ($tc in $TestCases) {
     
     $psi.EnvironmentVariables["MOCK_IS_ADMIN"] = $isAdminVal
     $psi.EnvironmentVariables["WINGET_BEHAVIOR"] = $behaviorVal
+    $psi.EnvironmentVariables["LOCALAPPDATA"] = (Join-Path $testDir "LocalAppData")
+    $psi.EnvironmentVariables["USERPROFILE"] = $testDir
     
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $psi
@@ -1247,43 +1314,72 @@ foreach ($tc in $TestCases) {
         $exitCode = -1
     }
     
+function Convert-PSCustomObjectToHashtable {
+    param($InputObject)
+    if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
+        $hash = @{}
+        foreach ($prop in $InputObject.PSObject.Properties) {
+            $hash[$prop.Name] = Convert-PSCustomObjectToHashtable $prop.Value
+        }
+        return $hash
+    }
+    if ($InputObject -is [System.Collections.IList] -or $InputObject -is [System.Array]) {
+        $list = New-Object System.Collections.ArrayList
+        foreach ($item in $InputObject) {
+            $list.Add((Convert-PSCustomObjectToHashtable $item)) | Out-Null
+        }
+        return $list
+    }
+    return $InputObject
+}
+
     $passed = $false
     $finalStateFile = Join-Path $testDir "final_state.json"
     if (Test-Path $finalStateFile) {
         try {
-            $finalState = Get-Content $finalStateFile -Raw | ConvertFrom-Json
+            $rawJson = Get-Content $finalStateFile -Raw | ConvertFrom-Json
+            $finalState = Convert-PSCustomObjectToHashtable -InputObject $rawJson
             $passed = & $tc.Assertion -state $finalState -exitCode $exitCode -testDir $testDir
         } catch {
             Write-Host "Assertion exception: $_" -ForegroundColor Red
         }
     } else {
-        Write-Host "Missing final_state.json! Child process output:" -ForegroundColor Red
-        $stdout = $process.StandardOutput.ReadToEnd()
-        $stderr = $process.StandardError.ReadToEnd()
-        Write-Host "STDOUT:`n$stdout" -ForegroundColor DarkGray
-        Write-Host "STDERR:`n$stderr" -ForegroundColor DarkRed
+        Write-Host "Missing final_state.json! Script execution log:" -ForegroundColor Red
+        $logFile = Join-Path $testDir "Repair-WingetAlias.log"
+        if (Test-Path $logFile) {
+            Get-Content $logFile | Write-Host -ForegroundColor DarkGray
+        } else {
+            Write-Host "No Repair-WingetAlias.log found." -ForegroundColor DarkRed
+        }
+        $transcriptFile = Join-Path $testDir "Repair-WingetAlias_Transcript.log"
+        if (Test-Path $transcriptFile) {
+            Write-Host "Transcript Log:" -ForegroundColor Red
+            Get-Content $transcriptFile | Write-Host -ForegroundColor DarkRed
+        }
     }
     
     if ($passed) {
         Write-Host "PASS" -ForegroundColor Green
         $passedCount++
         $results += [PSCustomObject]@{ Id = $tc.Id; Name = $tc.Name; Tier = $tc.Tier; Status = "PASS"; Message = "" }
+        if (Test-Path $testDir) {
+            Remove-Item -Path $testDir -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+        }
     } else {
         Write-Host "FAIL" -ForegroundColor Red
+        if (Test-Path $finalStateFile) {
+            Write-Host "final_state.json content:" -ForegroundColor DarkGray
+            Get-Content $finalStateFile | Write-Host -ForegroundColor DarkGray
+        }
         $failedCount++
         $results += [PSCustomObject]@{ Id = $tc.Id; Name = $tc.Name; Tier = $tc.Tier; Status = "FAIL"; Message = "Assertion failed" }
-    }
-    
-    # Clean up test sandbox
-    if (Test-Path $testDir) {
-        Remove-Item -Path $testDir -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
     }
 }
 
 # Clean up global temp mocks
-if (Test-Path $globalTemp) {
-    Remove-Item -Path $globalTemp -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
-}
+# if (Test-Path $globalTemp) {
+#     Remove-Item -Path $globalTemp -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+# }
 
 # 5. Print results summary
 Write-Host "`n==================================================" -ForegroundColor Cyan
@@ -1294,13 +1390,13 @@ $resultsByTier = $results | Group-Object Tier
 foreach ($group in $resultsByTier) {
     $tierPassed = ($group.Group | Where-Object { $_.Status -eq "PASS" }).Count
     $tierFailed = ($group.Group | Where-Object { $_.Status -eq "FAIL" }).Count
-    Write-Host "$($group.Name): $tierPassed Passed, $tierFailed Failed" -ForegroundColor (if ($tierFailed -eq 0) { "Green" } else { "Red" })
+    Write-Host "$($group.Name): $tierPassed Passed, $tierFailed Failed" -ForegroundColor $(if ($tierFailed -eq 0) { "Green" } else { "Red" })
 }
 
 Write-Host "--------------------------------------------------" -ForegroundColor Gray
 Write-Host "Total Tests: $($results.Count)"
 Write-Host "Total Passed: $passedCount" -ForegroundColor Green
-Write-Host "Total Failed: $failedCount" -ForegroundColor (if ($failedCount -eq 0) { "Green" } else { "Red" })
+Write-Host "Total Failed: $failedCount" -ForegroundColor $(if ($failedCount -eq 0) { "Green" } else { "Red" })
 Write-Host "==================================================" -ForegroundColor Cyan
 
 if ($failedCount -gt 0) {
