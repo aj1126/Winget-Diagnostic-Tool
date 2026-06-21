@@ -1,6 +1,6 @@
 # Winget Diagnostic & Remediation Tool
 
-[Quick Start](#-quick-start-copy--paste) | [Safety Standards](#️-non-destructive-architecture--safety-standards) | [Extended Docs](README_EXTENDED.md) | [Testing Suite](TEST_INFRA.md)
+[Quick Start](#-quick-start-copy--paste) | [Safety Standards](#️-non-destructive-architecture--safety-standards) | [Extended Docs](README_EXTENDED.md) | [Testing Suite](TEST_INFRA.md) | [Use Cases & Causes](docs/USE_CASES_AND_CAUSES.md)
 
 [![Lint State](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/lint.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
 [![Production Release Pipeline](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/release.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
