@@ -1,5 +1,7 @@
 # Winget Diagnostic & Remediation Tool
 
+[Quick Start](#-quick-start-copy--paste) | [Safety Standards](#️-non-destructive-architecture--safety-standards) | [Extended Docs](README_EXTENDED.md) | [Testing Suite](TEST_INFRA.md)
+
 [![Lint State](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/lint.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
 [![Production Release Pipeline](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/release.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -50,3 +52,8 @@ System utility execution demands strict isolation and deterministic boundaries. 
 * **PSScriptAnalyzer Lint Compliance:** 100% Pass (0 Errors, 0 Warnings)
 * **Integration Tests:** 60 / 60 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
 
+---
+
+## 📖 Deep Dive & Technical Reference
+If you are looking for the original technical deep dives, architectural breakdowns, historical edge cases, or deep platform context regarding this project:
+* 📄 **Read the full guide:** [Extended Documentation File](README_EXTENDED.md)
