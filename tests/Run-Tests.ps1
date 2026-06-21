@@ -48,13 +48,6 @@ try {
     exit 1
 }
 
-# 2. Define the child process runner script content as a raw string
-$childRunnerScript = @'
-param()
-
-$setup = Get-Content "setup.json" -Raw | ConvertFrom-Json
-
-# Define MockRegistry C# class
 $csharpCode = @"
 using System;
 using System.Collections.Generic;
@@ -240,7 +233,23 @@ public class MockFile {
 }
 "@
 
-Add-Type -TypeDefinition $csharpCode -ErrorAction Stop
+$mockDllPath = Join-Path $globalTemp "MockClasses.dll"
+try {
+    Add-Type -TypeDefinition $csharpCode -OutputType Library -OutputAssembly $mockDllPath -ErrorAction Stop
+} catch {
+    Write-Error "Failed to compile MockClasses.dll: $_"
+    exit 1
+}
+
+# 2. Define the child process runner script content as a raw string
+$childRunnerScript = @'
+param()
+
+$setup = Get-Content "setup.json" -Raw | ConvertFrom-Json
+
+# Define MockRegistry C# class
+# Load pre-compiled MockRegistry and MockFile C# classes
+Add-Type -Path $env:MOCK_DLL_PATH -ErrorAction Stop
 
 # Override type accelerators
 $ta = [psobject].Assembly.GetType("System.Management.Automation.TypeAccelerators")
@@ -1375,6 +1384,7 @@ foreach ($tc in $TestCases) {
     }
     $psi.Arguments = $escapedArgs -join " "
     
+    $psi.EnvironmentVariables["MOCK_DLL_PATH"] = $mockDllPath
     $psi.EnvironmentVariables["MOCK_IS_ADMIN"] = $isAdminVal
     $psi.EnvironmentVariables["WINGET_BEHAVIOR"] = $behaviorVal
     $psi.EnvironmentVariables["LOCALAPPDATA"] = (Join-Path $testDir "LocalAppData")
