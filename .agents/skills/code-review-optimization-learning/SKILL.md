@@ -27,6 +27,7 @@ When reviewing code, analyze the codebase across four critical dimensions:
   - `PSUseUsingScopeModifierInNewRunspaces`: Make sure variables from the parent session are accessed via `$using:varName` in new runspaces.
   - `PSAvoidUsingWriteHost`: Use `Write-Output`, `Write-Verbose`, or custom loggers instead.
   - `PSAvoidEmptyCatchBlock`: Catch blocks must contain logging, error handling, or an explicit comment justifying why the error is ignored.
+  - `PSAvoidAssignmentToAutomaticVariable`: Do not assign to built-in automatic variables (such as `$PSScriptRoot`, `$ErrorActionPreference`, or `$args`). Instead, assign to custom local variables (e.g., `$ScriptDir = $PSScriptRoot`) to prevent script execution warnings or runtime failures.
 
 ### D. Sandbox & Mock Integrity
 - **Mock Overrides**: Validate that .NET type mocking is clean. Direct calls to fully qualified classes (like `[System.IO.File]`) bypass type accelerators; ensure dynamic type accelerators (`[File]`, `[Registry]`) are registered and used.
