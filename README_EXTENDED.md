@@ -141,6 +141,13 @@ graph TD
 5. **TLS 1.3 Dynamic Resolution**: The `-DownloadFallback` pathway dynamically resolves the `Tls13` enum value (12288) on older .NET runtimes that lack native support for it, ensuring secure HTTPS downloads on all supported PowerShell versions.
 6. **Log Rotation**: Both `Repair-WingetAlias.log` and `Repair-WingetAlias_Transcript.log` are automatically rotated to `.bak` when they exceed 1MB.
 
+### Branch Governance & Security Gates
+To ensure stability, compliance, and regression control in the distribution pipeline, this repository implements the following branch protection rules:
+- **Commit & History Protections**: Force-pushes (`git push --force`) and branch deletions are strictly blocked on the `main` branch to guarantee a permanent, immutable commit ledger.
+- **Mandatory Code Gates**: All integrations targeting the `main` branch require a formal Pull Request (PR) with at least 1 linear code approval.
+- **Conversation Resolution**: Merging is blocked until all review conversations and architectural threads are explicitly marked as completely resolved.
+- **Blocking CI Status Checks**: Automated static code analysis checks (`Analyze and Run PSScriptAnalyzer` defined in `lint.yml` and `release.yml`) are configured as mandatory, non-skippable blocking nodes in the merge pipeline.
+
 ---
 
 ## 4. TESTING
