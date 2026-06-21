@@ -94,6 +94,12 @@ The framework tests full-system diagnostic flows under Tier 4, simulating comple
 3. **Open With Loop Remediation (Test 58)**: Simulates the infinite loop where the OS spawns the "Open With" dialog when attempting to run `winget.exe`. The tool detects, kills the `OpenWith.exe` process, and corrects the execution path.
 4. **Interactive Menu Selection (Test 59)**: Simulates console prompt inputs (diagnostics scan followed by exiting) to verify menu navigation reliability.
 5. **Verification Fails Post-Repair (Test 60)**: Assures that if the repair process executes but the system validation fails (e.g., execution loop persists), the script registers the error status and exits with a non-zero code.
+6. **Ghost Pointer Diagnostics (Test 61)**: Verifies that missing `winget.exe` with enabled registry alias results in GHOST POINTER status and triggers re-registration.
+7. **Session Isolation WMI Filter (Test 62)**: Verifies that `Get-TargetUserAndSid` filters `explorer.exe` by `SessionId`.
+8. **Non-interactive Auto-Force Check (Test 63)**: Verifies that running non-interactively without parameters defaults to Auto-Force and executes repair.
+9. **Empty Backup Rollback Handling (Test 64)**: Verifies that an empty/malformed backup registry file is handled gracefully during rollback.
+10. **Instant Crash Recovery (Test 65)**: Verifies that if `winget.exe` exits instantly with code 1, the diagnostic check still passes or recovers gracefully without hang.
+11. **ProfileList Inaccessible Fallback (Test 66)**: Verifies that user profile resolution falls back to `env:USERPROFILE` if the HKLM `ProfileList` registry key is inaccessible.
 
 ---
 
@@ -104,8 +110,8 @@ The framework tests full-system diagnostic flows under Tier 4, simulating comple
 | **Tier 1** | Feature Coverage | 25 | 100% |
 | **Tier 2** | Boundary & Corner Cases | 25 | 100% |
 | **Tier 3** | Cross-Feature Combinations | 5 | 100% |
-| **Tier 4** | Real-World Scenarios | 5 | 100% |
-| **Total** | **Full Suite** | **60** | **100%** |
+| **Tier 4** | Real-World Scenarios | 11 | 100% |
+| **Total** | **Full Suite** | **66** | **100%** |
 
 - **Strict Enforcement**: The test runner enforces a 100% pass rate. If any single test fails its assertion or throws an exception, `Run-Tests.ps1` returns exit code `1`.
-- **Pre-commit Verification**: All changes to `Repair-WingetAlias.ps1` must be verified using the test runner prior to integration.
+- **Pre-commit Verification**: All changes to `Repair-WingetAlias.ps1` or module code must be verified using the test runner prior to integration.
