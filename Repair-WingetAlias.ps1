@@ -51,7 +51,9 @@ function Rotate-LogFile {
                 }
                 [System.IO.File]::Move($Path, $BackupPath)
             }
-        } catch {}
+        } catch {
+            Write-Verbose "Failed to rotate log file '$Path': $_"
+        }
     }
 }
 
@@ -73,7 +75,9 @@ function Write-Log {
     
     try {
         Add-Content -Path $logPath -Value $logLine -ErrorAction SilentlyContinue
-    } catch {}
+    } catch {
+        Write-Verbose "Failed to write to log file '$logPath': $_"
+    }
     
     $color = "White"
     switch ($Level) {
@@ -131,7 +135,9 @@ function Get-TargetUserAndSid {
                     }
                 }
             }
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to query explorer.exe owner while resolving target user: $_" -Level "Warn"
+        }
         
         if ($targetUsername -eq $env:USERNAME -and $currentIdentity.Name -match "Administrator") {
             try {
@@ -145,7 +151,9 @@ function Get-TargetUserAndSid {
                         $targetSid = $sid.Value
                     }
                 }
-            } catch {}
+            } catch {
+                Write-Log -Message "Failed to resolve active console user while running as Administrator: $_" -Level "Warn"
+            }
         }
     }
     
@@ -174,7 +182,9 @@ function Expand-TargetUserPath {
                 $profilePath = $profileKey.GetValue("ProfileImagePath", $null)
                 $profileKey.Close()
             }
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to read target profile path from registry: $_" -Level "Warn"
+        }
     }
     if ([string]::IsNullOrEmpty($profilePath)) {
         $profilePath = $env:USERPROFILE
@@ -234,7 +244,9 @@ function Get-UserRegistryKey {
         try {
             $key = [Microsoft.Win32.Registry]::Users.OpenSubKey("$($target.Sid)\$SubKeyPath", $Writable)
             if ($key) { return $key }
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to open user registry key '$SubKeyPath' for SID '$($target.Sid)': $_" -Level "Warn"
+        }
     }
     
     try {
@@ -259,7 +271,9 @@ function Get-OrCreateUserRegistryKey {
                 $key = [Microsoft.Win32.Registry]::Users.CreateSubKey("$($target.Sid)\$SubKeyPath")
             }
             if ($key) { return $key }
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to create or open user registry key '$SubKeyPath' for SID '$($target.Sid)': $_" -Level "Warn"
+        }
     }
     
     try {
@@ -392,7 +406,9 @@ function Stop-ScriptTranscript {
     try {
         Stop-Transcript | Out-Null
         Write-Log -Message "Transcript logging stopped." -Level "Info"
-    } catch {}
+    } catch {
+        Write-Verbose "Failed to stop transcript: $_"
+    }
 }
 
 # Clean/Normalize path entries
@@ -542,7 +558,9 @@ function Restore-EnvironmentBackup {
                 if ($environmentKey) {
                     try {
                         $environmentKey.DeleteValue("PATH_PreRepairBackup", $false)
-                    } catch {}
+                    } catch {
+                        Write-Log -Message "Failed to delete PATH_PreRepairBackup after restore: $_" -Level "Warn"
+                    }
                     $environmentKey.Close()
                 }
                 
@@ -709,7 +727,9 @@ function Test-OpenWithLoop {
         $loopDetected = $true
         try {
             $proc.Kill()
-        } catch {}
+        } catch {
+            Write-Log -Message "Failed to terminate hung winget.exe process: $_" -Level "Warn"
+        }
     }
     
     return $loopDetected
@@ -820,7 +840,9 @@ function Install-WingetFallback {
             }
             try {
                 $securityProtocols = $securityProtocols -bor [System.Net.SecurityProtocolType]$tls13Val
-            } catch {}
+            } catch {
+                Write-Log -Message "Failed to enable TLS 1.3 explicitly; continuing with supported TLS protocols: $_" -Level "Warn"
+            }
             [System.Net.ServicePointManager]::SecurityProtocol = $securityProtocols
             
             Write-Log -Message "Downloading latest release package from GitHub..." -Level "Info"
@@ -998,324 +1020,4 @@ function Run-Diagnostics {
         $anyxaml = Get-TargetAppxPackage -Name "*UI.Xaml*"
         if ($anyxaml) {
             Write-Log -Message "Dependency Check: Microsoft.UI.Xaml 2.8 is missing, but other UI.Xaml packages are installed." -Level "Warn"
-        } else {
-            Write-Log -Message "Dependency Check: Microsoft.UI.Xaml is completely MISSING! DesktopAppInstaller will fail to launch." -Level "Error"
         }
-    }
-    
-    # 4. Alias files check
-    $aliasState = "PASS"
-    $aliases = @("winget.exe", "wingetdev.exe")
-    foreach ($alias in $aliases) {
-        $aliasPath = Join-Path $dirPath $alias
-        $exists = [System.IO.File]::Exists($aliasPath)
-        if ($exists) {
-            $isReparse = $false
-            $size = 0
-            try {
-                $attrs = [System.IO.File]::GetAttributes($aliasPath)
-                $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
-                $size = [System.IO.FileInfo]::new($aliasPath).Length
-            } catch {}
-            
-            if ($isReparse) {
-                Write-Log -Message "Alias File Check [$alias]: File exists and is a valid Reparse Point." -Level "Success"
-            } else {
-                $aliasState = "FAIL"
-                Write-Log -Message "Alias File Check [$alias]: File exists but is NOT a reparse point (size: $size bytes). Stubs are corrupted!" -Level "Error"
-            }
-        } else {
-            $aliasState = "FAIL"
-            Write-Log -Message "Alias File Check [$alias]: File does not exist!" -Level "Error"
-        }
-    }
-    
-    # 5. Registry toggles check
-    $settingsState = "PASS"
-    $regAliasSettings = @(
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe",
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\wingetdev.exe"
-    )
-    foreach ($aliasKey in $regAliasSettings) {
-        $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
-        if (Test-UserRegistryKey -SubKeyPath $subKey) {
-            $state = Get-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -DefaultValue $null
-            if ($state -eq 0) {
-                $settingsState = "FAIL"
-                Write-Log -Message "Alias Setting [$aliasKey]: DISABLED in registry (State = 0)!" -Level "Error"
-            } else {
-                Write-Log -Message "Alias Setting [$aliasKey]: Enabled/Default (State = $state)." -Level "Success"
-            }
-        } else {
-            Write-Log -Message "Alias Setting [$aliasKey]: Key not present (Default Enabled)." -Level "Success"
-        }
-    }
-    
-    # 6. OpenWith loop check
-    $loopDetected = Test-OpenWithLoop
-    
-    Write-Log -Message "==================================================" -Level "Info"
-    Write-Log -Message "                  SUMMARY STATUS                  " -Level "Info"
-    Write-Log -Message "  - Environment PATH:  $pathState" -Level "Info"
-    Write-Log -Message "  - AppX Package:      $pkgState" -Level "Info"
-    Write-Log -Message "  - Execution Aliases: $aliasState" -Level "Info"
-    Write-Log -Message "  - Alias Settings:    $settingsState" -Level "Info"
-    Write-Log -Message "  - Loop Detected:     $(if ($loopDetected) { 'YES (FAIL)' } else { 'NO (PASS)' })" -Level "Info"
-    Write-Log -Message "==================================================" -Level "Info"
-    
-    $needsRepair = ($pathState -eq "FAIL" -or $pkgState -eq "FAIL" -or $aliasState -eq "FAIL" -or $settingsState -eq "FAIL" -or $loopDetected)
-    return $needsRepair
-}
-
-# Run full automatic repair routine
-function Repair-All {
-    Write-Log -Message "Starting automated repair routine..." -Level "Info"
-    
-    # 1. Path Repair
-    Write-Log -Message "[Step 1/4] Repairing User environment PATH..." -Level "Info"
-    $pathSuccess = Repair-EnvironmentPath
-    if ($pathSuccess) {
-        Write-Log -Message "PATH repair completed." -Level "Success"
-    } else {
-        Write-Log -Message "PATH repair failed." -Level "Error"
-    }
-    
-    # Ensure WindowsApps folder exists
-    $dirPath = "$TargetLocalAppData\Microsoft\WindowsApps"
-    if (-not (Test-Path $dirPath)) {
-        if ($PSCmdlet.ShouldProcess("Directory $dirPath", "Create missing WindowsApps folder")) {
-            New-Item -ItemType Directory -Path $dirPath -Force | Out-Null
-            Write-Log -Message "Created folder at $dirPath." -Level "Success"
-        }
-    }
-    
-    # 2. Alias Setting Repair
-    Write-Log -Message "[Step 2/4] Verifying and re-enabling execution aliases in registry..." -Level "Info"
-    $regAliasSettings = @(
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe",
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\wingetdev.exe"
-    )
-    foreach ($aliasKey in $regAliasSettings) {
-        $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
-        if (Test-UserRegistryKey -SubKeyPath $subKey) {
-            $state = Get-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -DefaultValue $null
-            if ($state -eq 0) {
-                if ($PSCmdlet.ShouldProcess("Registry Key HKCU:\$subKey", "Set State = 1 (Enable alias)")) {
-                    Set-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -Value 1 -ValueKind DWord
-                    Write-Log -Message "Re-enabled alias settings for $aliasKey." -Level "Success"
-                }
-            }
-        }
-    }
-    
-    # 3. Clean corrupted alias stubs
-    Write-Log -Message "[Step 3/4] Checking and removing corrupted execution alias stubs..." -Level "Info"
-    $aliases = @("winget.exe", "wingetdev.exe")
-    foreach ($alias in $aliases) {
-        $aliasPath = Join-Path $dirPath $alias
-        $exists = [System.IO.File]::Exists($aliasPath)
-        if ($exists) {
-            $isReparse = $false
-            try {
-                $attrs = [System.IO.File]::GetAttributes($aliasPath)
-                $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
-            } catch {}
-            
-            if (-not $isReparse) {
-                Write-Log -Message "Corrupted stub file found at $aliasPath (Not a reparse point). Removing..." -Level "Warn"
-                Remove-ReparsePoint -Path $aliasPath
-            }
-        }
-    }
-    
-    # 4. Package repair / Re-registration
-    Write-Log -Message "[Step 4/4] Repairing AppX Package Registration..." -Level "Info"
-    $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
-    if (-not $pkg) {
-        Write-Log -Message "Microsoft.DesktopAppInstaller package is missing!" -Level "Error"
-        if ($DownloadFallback) {
-            Install-WingetFallback
-        } else {
-            Write-Log -Message "Please run script with -DownloadFallback switch to install Winget automatically." -Level "Info"
-        }
-    } else {
-        $packageSuccess = Repair-AppXInstallerPackage
-        if ($packageSuccess) {
-            Write-Log -Message "AppX package registration repaired." -Level "Success"
-        } else {
-            Write-Log -Message "AppX package registration repair failed." -Level "Error"
-        }
-    }
-    
-    Write-Log -Message "Remediation actions finished. Testing Winget execution..." -Level "Info"
-    
-    # Verify execution
-    $loopDetected = Test-OpenWithLoop
-    if ($loopDetected) {
-        Write-Log -Message "Verification Failed: Winget 'Open With' execution loop is still active." -Level "Error"
-    } else {
-        try {
-            $version = & "$TargetLocalAppData\Microsoft\WindowsApps\winget.exe" --version 2>&1
-            Write-Log -Message "Verification Success: Winget is working properly (Version: $($version.ToString().Trim()))." -Level "Success"
-        } catch {
-            Write-Log -Message "Verification Warn: Winget file verified, but execution returned: $_. Restarting your terminal may be required." -Level "Warn"
-        }
-    }
-}
-
-# Interactive wizard menu loop
-function Show-InteractiveMenu {
-    $title = @"
-==================================================
-      WINGET EXECUTION LOOP REPAIR WIZARD
-==================================================
-"@
-    
-    while ($true) {
-        Clear-Host
-        Write-Host $title -ForegroundColor Cyan
-        Write-Host "Active Mode: " -NoNewline
-        if ($WhatIfPreference) {
-            Write-Host "DRY RUN (What-If)" -ForegroundColor Yellow
-        } else {
-            Write-Host "LIVE / REMEDIATION" -ForegroundColor Green
-        }
-        Write-Host ""
-        Write-Host "[1] Run Full Diagnostics"
-        Write-Host "[2] Apply Path Repair (Add WindowsApps to PATH)"
-        Write-Host "[3] Reset / Re-register DesktopAppInstaller Package"
-        Write-Host "[4] Enable App Execution Aliases (Registry Settings)"
-        Write-Host "[5] Roll Back Previous Changes"
-        Write-Host "[6] Exit"
-        Write-Host ""
-        
-        $choice = Read-HostSafe "Select an option [1-6]"
-        
-        switch ($choice) {
-            "1" {
-                Clear-Host
-                Run-Diagnostics | Out-Null
-                Read-HostSafe "`nPress Enter to return to menu"
-            }
-            "2" {
-                Clear-Host
-                Repair-EnvironmentPath | Out-Null
-                Read-HostSafe "`nPress Enter to return to menu"
-            }
-            "3" {
-                Clear-Host
-                $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
-                if ($pkg) {
-                    Repair-AppXInstallerPackage | Out-Null
-                } else {
-                    Write-Log -Message "Package is missing. Downloading..." -Level "Info"
-                    Install-WingetFallback
-                }
-                Read-HostSafe "`nPress Enter to return to menu"
-            }
-            "4" {
-                Clear-Host
-                $aliasKeys = @(
-                    "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe",
-                    "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\wingetdev.exe"
-                )
-                foreach ($aliasKey in $aliasKeys) {
-                    $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
-                    if (Test-UserRegistryKey -SubKeyPath $subKey) {
-                        if ($PSCmdlet.ShouldProcess("Registry Key HKCU:\$subKey", "Set State = 1 (Enable alias)")) {
-                            Set-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -Value 1 -ValueKind DWord
-                            Write-Log -Message "Enabled alias setting $aliasKey." -Level "Success"
-                        }
-                    } else {
-                        Write-Log -Message "Alias Setting [$aliasKey]: Key not present (Default Enabled)." -Level "Info"
-                    }
-                }
-                Read-HostSafe "`nPress Enter to return to menu"
-            }
-            "5" {
-                Clear-Host
-                Restore-EnvironmentBackup | Out-Null
-                Read-HostSafe "`nPress Enter to return to menu"
-            }
-            "6" {
-                Write-Host "Exiting wizard. Goodbye!" -ForegroundColor Cyan
-                return
-            }
-            default {
-                Write-Host "Invalid option. Please choose [1-6]" -ForegroundColor Red
-                Start-Sleep -Seconds 1
-            }
-        }
-    }
-}
-
-# --- SCRIPT MAIN EXECUTION ---
-
-try {
-    if ($DryRun) {
-        $WhatIfPreference = $true
-    }
-    Start-ScriptTranscript
-
-    # Detect non-interactive mode and default to Force mode if no switches are chosen
-    if (-not $IsInteractive -and -not $Force -and -not $Rollback -and -not $ScheduleTask -and -not $DryRun) {
-        Write-Log -Message "Non-interactive session detected without explicit switches. Defaulting to automatic diagnostic and repair (Force mode)." -Level "Info"
-        $Force = $true
-    }
-
-    # Handle unattended background logon task switch
-    if ($ScheduleTask) {
-        Install-UnattendedTask
-        exit
-    }
-
-    # Handle background execution switch
-    if ($AsJob) {
-        Write-Output "Spawning repair script as a background PowerShell Job..."
-        
-        $jobParams = @{}
-        if ($Force) { $jobParams['Force'] = $true }
-        if ($Rollback) { $jobParams['Rollback'] = $true }
-        if ($DownloadFallback) { $jobParams['DownloadFallback'] = $true }
-        if ($ScheduleTask) { $jobParams['ScheduleTask'] = $true }
-        if ($DryRun) { $jobParams['DryRun'] = $true }
-        if ($WhatIfPreference) { $jobParams['WhatIf'] = $true }
-        
-        $job = Start-Job -ScriptBlock {
-            param($scriptPath, $params)
-            & $scriptPath @params
-        } -ArgumentList $PSCommandPath, $jobParams
-        Write-Output "Job started successfully. ID: $($job.Id), Name: $($job.Name)"
-        Write-Output "You can check job status using: Get-Job -Id $($job.Id)"
-        Write-Output "Retrieve job logs in real time from: $(Join-Path $PSScriptRoot 'Repair-WingetAlias.log')"
-        exit
-    }
-
-    # Check for Rollback request
-    if ($Rollback) {
-        Write-Log -Message "Rollback switch detected. Commencing restoration..." -Level "Info"
-        Restore-EnvironmentBackup | Out-Null
-        exit
-    }
-
-    # Check for automatic Force or DryRun execution
-    if ($Force -or $DryRun) {
-        if ($DryRun) {
-            Write-Log -Message "Dry-run switch detected. Commencing automatic diagnostics and simulated repairs..." -Level "Info"
-        } else {
-            Write-Log -Message "Force switch detected. Commencing automatic diagnostics and repairs..." -Level "Info"
-        }
-        $needsRepair = Run-Diagnostics
-        if ($needsRepair) {
-            Repair-All
-        } else {
-            Write-Log -Message "All checks passed. No repair necessary." -Level "Success"
-        }
-        exit
-    }
-
-    # Otherwise, run interactive menu wizard
-    Show-InteractiveMenu
-} finally {
-    Stop-ScriptTranscript
-}
