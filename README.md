@@ -31,8 +31,14 @@ For headless deployment image scrubbing or silent profile repairs, append the `-
 
 ```powershell
 .\Repair-WingetAlias.ps1 -Force
-
 ```
+
+#### Standardized Exit Codes (MDT/SCCM/Intune)
+The script and module return deterministic exit codes to simplify enterprise orchestration:
+* `0`: Success (System healthy or repaired successfully).
+* `1`: Failure (Error during execution or verification failure).
+* `2`: Dry-run mode completed successfully with simulated changes.
+* `3`: Rollback completed successfully.
 
 ---
 
@@ -56,4 +62,4 @@ If you are looking for the original technical deep dives, architectural breakdow
 
 ## 🧪 Vetting Status
 * **PSScriptAnalyzer Lint Compliance:** 100% Pass (0 Errors, 0 Warnings)
-* **Integration Tests:** 60 / 60 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
+* **Integration Tests:** 66 / 66 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
