@@ -20,6 +20,8 @@ The tool is a standalone PowerShell script (`Repair-WingetAlias.ps1`) designed t
 | 5 | Verify Implementation | Run E2E tests (60/60 passing), verify PS 5.1/7+ compatibility. | Milestone 2, 4 | DONE |
 | 6 | Forensic Audit | Forensic auditor verified integrity (no hardcoding, facade logic). CLEAN verdict. | Milestone 5 | DONE |
 | 7 | Victory Audit | Independent 3-phase audit (timeline, integrity, test execution). VICTORY CONFIRMED. | Milestone 6 | DONE |
+| 8 | Governance Rulesets | Establish branch protection rules, mandatory PR approvals, conversation resolution gates, and blocking CI pipelines. | Milestone 7 | DONE |
+
 
 ## Interface Contracts
 ### `Repair-WingetAlias.ps1` CLI Contract
