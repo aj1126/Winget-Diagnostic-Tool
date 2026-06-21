@@ -47,13 +47,13 @@ System utility execution demands strict isolation and deterministic boundaries. 
 
 ---
 
-## 🧪 Vetting Status
-
-* **PSScriptAnalyzer Lint Compliance:** 100% Pass (0 Errors, 0 Warnings)
-* **Integration Tests:** 60 / 60 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
+## 📖 Deep Dive & Technical Reference
+If you are looking for the original technical deep dives, architectural breakdowns, historical edge cases, or deep platform context regarding this project:
+* 📄 **Read the full guide:** [Extended Documentation Reference](README_EXTENDED.md)
+* 🔍 **Root Causes & Scenarios:** [Use-Cases & Root Cause Analysis](docs/USE_CASES_AND_CAUSES.md)
 
 ---
 
-## 📖 Deep Dive & Technical Reference
-If you are looking for the original technical deep dives, architectural breakdowns, historical edge cases, or deep platform context regarding this project:
-* 📄 **Read the full guide:** [Extended Documentation File](README_EXTENDED.md)
+## 🧪 Vetting Status
+* **PSScriptAnalyzer Lint Compliance:** 100% Pass (0 Errors, 0 Warnings)
+* **Integration Tests:** 60 / 60 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
