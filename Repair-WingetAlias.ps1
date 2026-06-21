@@ -1,3 +1,4 @@
+using namespace Microsoft.Win32
 <#
 .SYNOPSIS
     Winget Execution Alias Diagnostic and Remediation Tool.
@@ -1393,3 +1394,4 @@ try {
 } finally {
     Stop-ScriptTranscript
 }
+
