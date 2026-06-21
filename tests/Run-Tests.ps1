@@ -418,6 +418,27 @@ function Test-Path {
     return Microsoft.PowerShell.Management\Test-Path -Path $Path -ErrorAction SilentlyContinue
 }
 
+function Write-EventLog {
+    param(
+        [Parameter(Mandatory=$true)][string]$LogName,
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)][int]$EventId,
+        [Parameter(Mandatory=$true)][System.Diagnostics.EventLogEntryType]$EntryType,
+        [Parameter(Mandatory=$true)][string]$Message,
+        [Parameter(Mandatory=$false)][System.Management.Automation.ActionPreference]$ErrorAction
+    )
+    $global:CalledCmdlets.Add("Write-EventLog")
+}
+
+function New-EventLog {
+    param(
+        [Parameter(Mandatory=$true)][string]$LogName,
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$false)][System.Management.Automation.ActionPreference]$ErrorAction
+    )
+    $global:CalledCmdlets.Add("New-EventLog")
+}
+
 # CIM/WMI Cmdlets
 function Get-CimInstance {
     param(
@@ -1311,7 +1332,7 @@ $results = @()
 $failedCount = 0
 $passedCount = 0
 
-Write-Host "Running 62 isolated test cases..." -ForegroundColor Cyan
+Write-Host "Running $($TestCases.Count) isolated test cases..." -ForegroundColor Cyan
 
 foreach ($tc in $TestCases) {
     Write-Host "Running Test $($tc.Id): $($tc.Name)... " -NoNewline -ForegroundColor White

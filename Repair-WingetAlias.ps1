@@ -40,7 +40,10 @@ param (
     [switch]$ScheduleTask,
 
     [Parameter(Mandatory = $false)]
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$EventLog
 )
 
 # Register type accelerators if not present
@@ -52,6 +55,16 @@ if (-not $taInstance::Get.ContainsKey("File")) {
     $taInstance::Add("File", [System.IO.File])
 }
 
+# Register EventLog Source if requested and elevated
+if ($EventLog) {
+    try {
+        if (-not [System.Diagnostics.EventLog]::SourceExists("WingetDiagnosticTool")) {
+            New-EventLog -LogName Application -Source "WingetDiagnosticTool" -ErrorAction Stop
+        }
+    } catch {
+        # Suppress error (likely not running as Admin)
+    }
+}
 
 # Helper to rotate log files when they exceed 1MB
 function Rotate-LogFile {
@@ -85,7 +98,7 @@ function Write-Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logLine = "[$timestamp] [$Level] $Message"
     
-    # Write to log file
+    # Write to local log file
     $logPath = Join-Path $PSScriptRoot "Repair-WingetAlias.log"
     $backupPath = Join-Path $PSScriptRoot "Repair-WingetAlias.bak"
     Rotate-LogFile -Path $logPath -BackupPath $backupPath
@@ -94,6 +107,23 @@ function Write-Log {
         Add-Content -Path $logPath -Value $logLine -ErrorAction SilentlyContinue
     } catch {
         $null = $_
+    }
+    
+    # Write to Windows Event Log if requested
+    if ($EventLog) {
+        $eventType = "Information"
+        $eventId = 1001
+        switch ($Level) {
+            "Success" { $eventType = "Information"; $eventId = 1000 }
+            "Info"    { $eventType = "Information"; $eventId = 1001 }
+            "Warn"    { $eventType = "Warning"; $eventId = 2000 }
+            "Error"   { $eventType = "Error"; $eventId = 3000 }
+        }
+        try {
+            Write-EventLog -LogName Application -Source "WingetDiagnosticTool" -EventId $eventId -EntryType $eventType -Message $Message -ErrorAction Stop
+        } catch {
+            $null = $_
+        }
     }
     
     $color = "White"
@@ -1413,6 +1443,7 @@ try {
         if ($DownloadFallback) { $jobParams['DownloadFallback'] = $true }
         if ($ScheduleTask) { $jobParams['ScheduleTask'] = $true }
         if ($DryRun) { $jobParams['DryRun'] = $true }
+        if ($EventLog) { $jobParams['EventLog'] = $true }
         if ($WhatIfPreference) { $jobParams['WhatIf'] = $true }
         
         $job = Start-Job -ScriptBlock {
