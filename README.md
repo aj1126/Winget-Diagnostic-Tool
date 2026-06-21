@@ -1,21 +1,3 @@
-### 1. Repository Topics Setup (Inbound Discovery)
-
-To inject the required metadata visibility into GitHub's index algorithms, execute this native Windows PowerShell command using the GitHub CLI (`gh`) to update your repository settings instantly:
-
-```powershell
-gh repo edit aj1126/winget-diagnostic-tool --add-topic "powershell,winget,sysadmin,windows-11,reparse-points,automation,windows-utility"
-
-```
-
-*If you are updating via the GitHub Web UI instead, navigate to your repository homepage, click the ⚙️ gear icon next to "About" on the right sidebar, and paste these exact tags into the "Topics" field.*
-
----
-
-### 2. High-Converting `README.md` Replacement
-
-Replace your root `README.md` file with the following production-grade document. It features live dynamic build status badges, satisfies the 5-second problem-solving rule, and explicitly details the script's non-destructive architecture guardrails to earn immediate trust from sysadmins and developers.
-
-```markdown
 # Winget Diagnostic & Remediation Tool
 
 [![Lint State](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/lint.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
