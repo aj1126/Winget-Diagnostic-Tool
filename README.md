@@ -1,5 +1,7 @@
 # Winget Diagnostic & Remediation Tool
 
+[![Lint and Validate PowerShell](https://github.com/aj1126/Winget-Diagnostic-Tool/actions/workflows/lint.yml/badge.svg)](https://github.com/aj1126/Winget-Diagnostic-Tool/actions/workflows/lint.yml)
+
 A production-grade, single-profile PowerShell utility designed to diagnose and repair Windows Package Manager (`winget`) execution loops, corrupted reparse points, and registry PATH inconsistencies on Windows 11.
 
 > **Status**: ✅ Complete — 60/60 E2E tests passing, forensic audit clean, independently verified.
