@@ -8,4 +8,6 @@ Repair-WingetAlias_Transcript.bak
 Repair-WingetAlias_Backup_*.reg
 
 # Ignore agent orchestration state
-.agents/
+.agents/*
+!.agents/skills/
+
