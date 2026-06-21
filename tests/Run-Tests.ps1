@@ -409,6 +409,44 @@ function Test-Path {
     return Microsoft.PowerShell.Management\Test-Path -Path $Path -ErrorAction SilentlyContinue
 }
 
+# CIM/WMI Cmdlets
+function Get-CimInstance {
+    param(
+        [string]$ClassName,
+        [string]$Filter,
+        $ErrorAction
+    )
+    $global:CalledCmdlets.Add("Get-CimInstance: ClassName=$ClassName Filter=$Filter")
+    if ($ClassName -eq "Win32_Process" -and $Filter -like "*explorer.exe*") {
+        return [PSCustomObject]@{
+            Name = "explorer.exe"
+            ProcessId = 1234
+        }
+    }
+    if ($ClassName -eq "Win32_ComputerSystem") {
+        return [PSCustomObject]@{
+            UserName = "MockUser"
+        }
+    }
+    return $null
+}
+
+function Invoke-CimMethod {
+    param(
+        $InputObject,
+        [string]$MethodName,
+        $ErrorAction
+    )
+    $global:CalledCmdlets.Add("Invoke-CimMethod: MethodName=$MethodName")
+    if ($MethodName -eq "GetOwner") {
+        return [PSCustomObject]@{
+            User = "MockUser"
+            Domain = "MockDomain"
+        }
+    }
+    return $null
+}
+
 # AppX Cmdlets
 function Get-AppxPackage {
     param(
@@ -482,8 +520,13 @@ function Invoke-WebRequest {
 
 function Get-Process {
     param(
-        [string]$Name
+        [string]$Name,
+        [int]$Id
     )
+    if ($Id) {
+        $global:CalledCmdlets.Add("Get-Process: Id=$Id")
+        return Microsoft.PowerShell.Management\Get-Process -Id $Id -ErrorAction SilentlyContinue
+    }
     $global:CalledCmdlets.Add("Get-Process: $Name")
     if ($Name -eq "OpenWith") {
         if ($global:SimulateOpenWithLoop) {
@@ -521,6 +564,8 @@ function Start-Process {
     $normalizedArgList = $ArgumentList
     if ($ArgumentList -like "*LocalAppData\Microsoft\WindowsApps*") {
         $normalizedArgList = $ArgumentList -replace '[A-Z]:\\.*\\TestCase_\d+\\LocalAppData', 'LocalAppData'
+    } elseif ($ArgumentList -match '[A-Z]:\\.*\\TESTCA~[^\\]+\\LOCALA~1\\MICROS~1\\WINDOW~1') {
+        $normalizedArgList = $ArgumentList -replace '[A-Z]:\\.*\\TESTCA~[^\\]+\\LOCALA~1\\MICROS~1\\WINDOW~1', 'LocalAppData\Microsoft\WindowsApps'
     }
     $global:CalledCmdlets.Add("Start-Process: $FilePath $normalizedArgList")
     if ($FilePath -eq "reg.exe" -and $ArgumentList -like "import*") {
@@ -1218,13 +1263,46 @@ Add-Test -Id 60 -Tier "Tier 4" -Name "Verification fails post-repair" `
         $state.CalledCmdlets -contains "Stop-Process: OpenWith"
     }
 
+Add-Test -Id 61 -Tier "Tier 4" -Name "Ghost pointer diagnostics check" `
+    -Description "Verify that missing winget.exe with enabled registry alias results in GHOST POINTER status and triggers re-registration." `
+    -Setup { @{ 
+        Files = @{} 
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 }
+        }
+        AppxPackages = @(
+            @{
+                Name = "Microsoft.DesktopAppInstaller"
+                PackageFullName = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe"
+                InstallLocation = "LocalAppData\Microsoft\WindowsApps"
+                Version = "1.22.11261.0"
+                Status = "Ok"
+            }
+        )
+    } } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode) 
+        $state.CalledCmdlets -contains "Add-AppxPackage: -Register LocalAppData\Microsoft\WindowsApps\AppxManifest.xml"
+    }
+
+Add-Test -Id 62 -Tier "Tier 4" -Name "Session isolation WMI filter" `
+    -Description "Verify that Get-TargetUserAndSid filters explorer.exe by SessionId." `
+    -Setup { @{ 
+        MockIsAdmin = "true"
+    } } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode) 
+        $matchedCall = $state.CalledCmdlets | Where-Object { $_ -match "Get-CimInstance: ClassName=Win32_Process Filter=Name = 'explorer.exe' and SessionId = \d+" }
+        $null -ne $matchedCall
+    }
+
 
 # 4. Execution loop
 $results = @()
 $failedCount = 0
 $passedCount = 0
 
-Write-Host "Running 60 isolated test cases..." -ForegroundColor Cyan
+Write-Host "Running 62 isolated test cases..." -ForegroundColor Cyan
 
 foreach ($tc in $TestCases) {
     Write-Host "Running Test $($tc.Id): $($tc.Name)... " -NoNewline -ForegroundColor White

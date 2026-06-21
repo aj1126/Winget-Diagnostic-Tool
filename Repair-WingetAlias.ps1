@@ -149,7 +149,12 @@ function Get-TargetUserAndSid {
     
     if ($isAdmin) {
         try {
-            $explorerProcs = Get-CimInstance -ClassName Win32_Process -Filter "Name = 'explorer.exe'" -ErrorAction SilentlyContinue
+            $currentSessionId = (Get-Process -Id $PID).SessionId
+            $filter = "Name = 'explorer.exe'"
+            if ($null -ne $currentSessionId) {
+                $filter += " and SessionId = $currentSessionId"
+            }
+            $explorerProcs = Get-CimInstance -ClassName Win32_Process -Filter $filter -ErrorAction SilentlyContinue
             if ($explorerProcs) {
                 foreach ($ep in $explorerProcs) {
                     $owner = Invoke-CimMethod -InputObject $ep -MethodName GetOwner -ErrorAction SilentlyContinue
@@ -700,8 +705,8 @@ function Test-OpenWithLoop {
     Write-Log -Message "Testing for active Winget Open With loop..." -Level "Info"
     $wingetPath = "$TargetLocalAppData\Microsoft\WindowsApps\winget.exe"
     if (-not [File]::Exists($wingetPath)) {
-        Write-Log -Message "winget.exe alias does not exist at $wingetPath. Cannot perform execution check." -Level "Warn"
-        return $false
+        Write-Log -Message "winget.exe alias does not exist at $wingetPath. GHOST POINTER detected!" -Level "Error"
+        return "GHOST_POINTER"
     }
     
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -823,15 +828,67 @@ function Remove-ReparsePoint {
     )
     if ([File]::Exists($Path)) {
         if (Should-Process -Target "File $Path" -Action "Delete execution alias file stub") {
+            $shortPath = $Path
             try {
-                $ErrorActionPreference = "Stop"
-                # Use .NET API to safely delete reparse point file stubs
+                $fso = New-Object -ComObject Scripting.FileSystemObject
+                $fsoFile = $fso.GetFile($Path)
+                if ($fsoFile -and $fsoFile.ShortPath) {
+                    $shortPath = $fsoFile.ShortPath
+                }
+            } catch {
+                $null = $_
+            }
+
+            $isReparse = $false
+            try {
+                $attrs = [File]::GetAttributes($Path)
+                $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
+            } catch {
+                $null = $_
+            }
+
+            if ($isReparse) {
+                try {
+                    Write-Log -Message "Attempting native NTFS reparse point deletion via fsutil for $shortPath..." -Level "Info"
+                    $proc = Start-Process fsutil.exe -ArgumentList "reparsepoint delete `"$shortPath`"" -NoNewWindow -Wait -PassThru -ErrorAction Stop
+                    if ($proc.ExitCode -eq 0 -and -not [File]::Exists($Path)) {
+                        Write-Log -Message "Deleted reparse point at $Path via fsutil." -Level "Success"
+                        return
+                    } else {
+                        Write-Log -Message "fsutil failed to delete reparse point (ExitCode: $($proc.ExitCode))." -Level "Warn"
+                    }
+                } catch {
+                    Write-Log -Message "Error running fsutil: $_" -Level "Warn"
+                }
+            }
+
+            try {
                 [File]::Delete($Path)
                 Write-Log -Message "Deleted file stub at $Path." -Level "Success"
+            } catch [System.UnauthorizedAccessException] {
+                Write-Log -Message "Access Denied trying to delete $Path. Attempting to take ownership and grant permissions..." -Level "Warn"
+                try {
+                    Start-Process takeown.exe -ArgumentList "/f `"$shortPath`"" -NoNewWindow -Wait -ErrorAction Stop
+                    Start-Process icacls.exe -ArgumentList "`"$shortPath`" /grant `"\`"$($env:USERNAME)\`":(F)`"" -NoNewWindow -Wait -ErrorAction Stop
+                    [File]::Delete($Path)
+                    Write-Log -Message "Deleted file stub at $Path after ACL repair." -Level "Success"
+                } catch {
+                    Write-Log -Message "Failed to delete after ACL repair: $_. Attempting cmd fallback..." -Level "Warn"
+                    try {
+                        Start-Process cmd.exe -ArgumentList "/c del /f /q `"$shortPath`"" -NoNewWindow -Wait -ErrorAction Stop
+                        if ([File]::Exists($Path)) {
+                            Write-Log -Message "Failed to delete $Path using cmd fallback after ACL repair." -Level "Error"
+                        } else {
+                            Write-Log -Message "Deleted file stub at $Path via cmd fallback after ACL repair." -Level "Success"
+                        }
+                    } catch {
+                        Write-Log -Message "Failed to remove execution alias file after ACL repair: $_" -Level "Error"
+                    }
+                }
             } catch {
                 Write-Log -Message "Failed to delete $Path using .NET API. Attempting cmd fallback..." -Level "Warn"
                 try {
-                    Start-Process cmd.exe -ArgumentList "/c del /f /q `"$Path`"" -NoNewWindow -Wait
+                    Start-Process cmd.exe -ArgumentList "/c del /f /q `"$shortPath`"" -NoNewWindow -Wait -ErrorAction Stop
                     if ([File]::Exists($Path)) {
                         Write-Log -Message "Failed to delete $Path using cmd fallback." -Level "Error"
                     } else {
@@ -1117,7 +1174,8 @@ function Run-Diagnostics {
     }
     
     # 6. OpenWith loop check
-    $loopDetected = Test-OpenWithLoop
+    $loopResult = Test-OpenWithLoop
+    $loopDetected = ($loopResult -eq $true -or $loopResult -eq "GHOST_POINTER")
     
     Write-Log -Message "==================================================" -Level "Info"
     Write-Log -Message "                  SUMMARY STATUS                  " -Level "Info"
@@ -1125,7 +1183,7 @@ function Run-Diagnostics {
     Write-Log -Message "  - AppX Package:      $pkgState" -Level "Info"
     Write-Log -Message "  - Execution Aliases: $aliasState" -Level "Info"
     Write-Log -Message "  - Alias Settings:    $settingsState" -Level "Info"
-    Write-Log -Message "  - Loop Detected:     $(if ($loopDetected) { 'YES (FAIL)' } else { 'NO (PASS)' })" -Level "Info"
+    Write-Log -Message "  - Loop Detected:     $(if ($loopResult -eq $true) { 'YES (FAIL)' } elseif ($loopResult -eq 'GHOST_POINTER') { 'GHOST POINTER (FAIL)' } else { 'NO (PASS)' })" -Level "Info"
     Write-Log -Message "==================================================" -Level "Info"
     
     $needsRepair = ($pathState -eq "FAIL" -or $pkgState -eq "FAIL" -or $aliasState -eq "FAIL" -or $settingsState -eq "FAIL" -or $loopDetected)
