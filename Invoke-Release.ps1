@@ -10,6 +10,7 @@
     .\Invoke-Release.ps1 -Version "1.0.0"
 #>
 [CmdletBinding()]
+[Diagnostics.CodeAnalysis.SuppressMessage("PSAvoidUsingWriteHost", "")]
 param(
     [Parameter(Mandatory = $true, HelpMessage = "The release version string (e.g., 1.0.0)")]
     [ValidateNotNullOrEmpty()]

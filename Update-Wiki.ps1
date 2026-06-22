@@ -7,6 +7,8 @@
     The path to the local PNG image representing a successful E2E test run.
 #>
 [CmdletBinding()]
+[Diagnostics.CodeAnalysis.SuppressMessage("PSAvoidUsingWriteHost", "")]
+[Diagnostics.CodeAnalysis.SuppressMessage("PSUseBOMForUnicodeEncodedFile", "")]
 param(
     [Parameter(Mandatory = $false)]
     [string]$ImageSource
@@ -29,7 +31,7 @@ if (-not [string]::IsNullOrEmpty($ImageSource) -and (Test-Path $ImageSource)) {
     if (-not (Test-Path $WikiImagesDir)) {
         New-Item -ItemType Directory -Path $WikiImagesDir -Force | Out-Null
     }
-    
+
     $DestinationImage = Join-Path $WikiImagesDir "successful_test_run.png"
     Copy-Item -Path $ImageSource -Destination $DestinationImage -Force
     Write-Host "Copied E2E test screenshot to wiki images." -ForegroundColor Green

@@ -2,6 +2,7 @@
 # E2E Test Suite for Repair-WingetAlias.ps1
 # Runs on both Windows PowerShell 5.1 and PowerShell Core 7+
 [CmdletBinding()]
+[Diagnostics.CodeAnalysis.SuppressMessage("PSAvoidUsingWriteHost", "")]
 param(
     [Parameter(Mandatory = $false)]
     [int[]]$Id,
