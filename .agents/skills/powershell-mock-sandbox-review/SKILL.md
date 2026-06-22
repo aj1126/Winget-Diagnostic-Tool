@@ -77,3 +77,33 @@ When testing code that checks user elevation via `[System.Security.Principal.Win
       }
   }
   ```
+- [ ] **Elevated Registry Redirection**: When mocking elevated registry modifications, redirect HKEY_CURRENT_USER (HKCU) queries to the appropriate mocked user hive (e.g., `HKEY_USERS\<SID>\Environment`) because Windows maps user environments to HKEY_USERS under elevation.
+
+---
+
+## 5. Fully Qualified Type Mocking via Class Reference Variables
+When code under test calls fully qualified .NET static methods directly (e.g., `[System.Security.Principal.WindowsIdentity]::GetCurrent()`), it bypasses short type accelerators like `[WindowsIdentity]`. Replacing all instances with a short name might be verbose or prone to regression.
+
+### Recommended Implementation:
+1. **In the Script/Module Under Test**:
+   Declare script-scoped class reference variables at the top of the file/module helper:
+   ```powershell
+   $script:WindowsIdentityClass = [System.Security.Principal.WindowsIdentity]
+   $script:RegistryClass = [Microsoft.Win32.Registry]
+
+   if ($env:IsTestRunner) {
+       $script:WindowsIdentityClass = [MockWindowsIdentity]
+       $script:RegistryClass = [MockRegistry]
+   }
+   ```
+2. **Throughout the Script**:
+   Invoke static methods/properties through the reference variable:
+   ```powershell
+   $identity = $script:WindowsIdentityClass::GetCurrent()
+   $key = $script:RegistryClass::CurrentUser.OpenSubKey("Environment")
+   ```
+
+### Review Checklist:
+- [ ] Audit the codebase for fully qualified type names (`[System.*]`) used to invoke static methods.
+- [ ] Ensure they are mapped to `$script:<Name>Class` reference variables if they need to be intercepted in E2E tests.
+

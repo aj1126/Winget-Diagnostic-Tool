@@ -11,3 +11,4 @@ Repair-WingetAlias_Backup_*.reg
 .agents/*
 !.agents/skills/
 
+wiki/

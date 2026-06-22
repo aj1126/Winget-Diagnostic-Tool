@@ -4,5 +4,7 @@
         "LOCALAPPDATA",
         "NTFS",
         "Winget"
-    ]
+    ],
+    "powershell.scriptAnalysis.enable": true,
+    "powershell.codeFormatting.preset": "OTBS"
 }

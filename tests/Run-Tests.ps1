@@ -1,9 +1,23 @@
 # Run-Tests.ps1
 # E2E Test Suite for Repair-WingetAlias.ps1
 # Runs on both Windows PowerShell 5.1 and PowerShell Core 7+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $false)]
+    [int[]]$Id,
 
-$PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
+    [Parameter(Mandatory = $false)]
+    [string[]]$Tier,
+
+    [Parameter(Mandatory = $false)]
+    [string]$Name
+)
+
+$ScriptDir = $PSScriptRoot
+if ([string]::IsNullOrEmpty($ScriptDir)) {
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+$ProjectRoot = Split-Path -Parent $ScriptDir
 $ScriptToTest = Join-Path $ProjectRoot "Repair-WingetAlias.ps1"
 
 Write-Host "==================================================" -ForegroundColor Cyan
@@ -48,13 +62,6 @@ try {
     exit 1
 }
 
-# 2. Define the child process runner script content as a raw string
-$childRunnerScript = @'
-param()
-
-$setup = Get-Content "setup.json" -Raw | ConvertFrom-Json
-
-# Define MockRegistry C# class
 $csharpCode = @"
 using System;
 using System.Collections.Generic;
@@ -240,7 +247,30 @@ public class MockFile {
 }
 "@
 
-Add-Type -TypeDefinition $csharpCode -ErrorAction Stop
+$mockDllPath = Join-Path $globalTemp "MockClasses.dll"
+try {
+    if (-not (Test-Path $mockDllPath)) {
+        Add-Type -TypeDefinition $csharpCode -OutputType Library -OutputAssembly $mockDllPath -ErrorAction Stop
+    }
+} catch {
+    if (-not (Test-Path $mockDllPath)) {
+        Write-Error "Failed to compile MockClasses.dll: $_"
+        exit 1
+    }
+    # If the file is locked, we can safely reuse the existing version
+}
+
+# 2. Define the child process runner script content as a raw string
+$childRunnerScript = @'
+param()
+
+$global:IsTestRunner = $true
+$env:IsTestRunner = "true"
+$setup = Get-Content "setup.json" -Raw | ConvertFrom-Json
+
+# Define MockRegistry C# class
+# Load pre-compiled MockRegistry and MockFile C# classes
+Add-Type -Path $env:MOCK_DLL_PATH -ErrorAction Stop
 
 # Override type accelerators
 $ta = [psobject].Assembly.GetType("System.Management.Automation.TypeAccelerators")
@@ -350,7 +380,7 @@ if ($setup.Files) {
 }
 
 # Mock cmdlets functions
-function Get-ItemPropertyValue {
+function global:Get-ItemPropertyValue {
     param(
         [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
         [string]$Path,
@@ -372,7 +402,7 @@ function Get-ItemPropertyValue {
     return Microsoft.PowerShell.Management\Get-ItemPropertyValue -Path $Path -Name $Name -ErrorAction SilentlyContinue
 }
 
-function Set-ItemProperty {
+function global:Set-ItemProperty {
     param(
         [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
         [string]$Path,
@@ -394,7 +424,7 @@ function Set-ItemProperty {
     return Microsoft.PowerShell.Management\Set-ItemProperty -Path $Path -Name $Name -Value $Value -Force -ErrorAction SilentlyContinue
 }
 
-function Test-Path {
+function global:Test-Path {
     param(
         [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
         [string]$Path
@@ -409,8 +439,67 @@ function Test-Path {
     return Microsoft.PowerShell.Management\Test-Path -Path $Path -ErrorAction SilentlyContinue
 }
 
+function global:Write-EventLog {
+    param(
+        [Parameter(Mandatory=$true)][string]$LogName,
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)][int]$EventId,
+        [Parameter(Mandatory=$true)][System.Diagnostics.EventLogEntryType]$EntryType,
+        [Parameter(Mandatory=$true)][string]$Message,
+        [Parameter(Mandatory=$false)][System.Management.Automation.ActionPreference]$ErrorAction
+    )
+    $global:CalledCmdlets.Add("Write-EventLog")
+}
+
+function global:New-EventLog {
+    param(
+        [Parameter(Mandatory=$true)][string]$LogName,
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$false)][System.Management.Automation.ActionPreference]$ErrorAction
+    )
+    $global:CalledCmdlets.Add("New-EventLog")
+}
+
+# CIM/WMI Cmdlets
+function global:Get-CimInstance {
+    param(
+        [string]$ClassName,
+        [string]$Filter,
+        $ErrorAction
+    )
+    $global:CalledCmdlets.Add("Get-CimInstance: ClassName=$ClassName Filter=$Filter")
+    if ($ClassName -eq "Win32_Process" -and $Filter -like "*explorer.exe*") {
+        return [PSCustomObject]@{
+            Name = "explorer.exe"
+            ProcessId = 1234
+        }
+    }
+    if ($ClassName -eq "Win32_ComputerSystem") {
+        return [PSCustomObject]@{
+            UserName = "MockUser"
+        }
+    }
+    return $null
+}
+
+function global:Invoke-CimMethod {
+    param(
+        $InputObject,
+        [string]$MethodName,
+        $ErrorAction
+    )
+    $global:CalledCmdlets.Add("Invoke-CimMethod: MethodName=$MethodName")
+    if ($MethodName -eq "GetOwner") {
+        return [PSCustomObject]@{
+            User = "MockUser"
+            Domain = "MockDomain"
+        }
+    }
+    return $null
+}
+
 # AppX Cmdlets
-function Get-AppxPackage {
+function global:Get-AppxPackage {
     param(
         [string]$Name
     )
@@ -426,7 +515,7 @@ function Get-AppxPackage {
     return $null
 }
 
-function Add-AppxPackage {
+function global:Add-AppxPackage {
     param(
         [switch]$DisableDevelopmentMode,
         [string]$Register,
@@ -453,7 +542,7 @@ function Add-AppxPackage {
     }
 }
 
-function Reset-AppxPackage {
+function global:Reset-AppxPackage {
     param(
         [string]$Package
     )
@@ -463,7 +552,7 @@ function Reset-AppxPackage {
     }
 }
 
-function Invoke-WebRequest {
+function global:Invoke-WebRequest {
     param(
         [string]$Uri,
         [string]$OutFile,
@@ -480,10 +569,15 @@ function Invoke-WebRequest {
     [System.IO.File]::WriteAllText($OutFile, "Dummy MSIX content")
 }
 
-function Get-Process {
+function global:Get-Process {
     param(
-        [string]$Name
+        [string]$Name,
+        [int]$Id
     )
+    if ($Id) {
+        $global:CalledCmdlets.Add("Get-Process: Id=$Id")
+        return Microsoft.PowerShell.Management\Get-Process -Id $Id -ErrorAction SilentlyContinue
+    }
     $global:CalledCmdlets.Add("Get-Process: $Name")
     if ($Name -eq "OpenWith") {
         if ($global:SimulateOpenWithLoop) {
@@ -497,7 +591,7 @@ function Get-Process {
     return Microsoft.PowerShell.Management\Get-Process -Name $Name -ErrorAction SilentlyContinue
 }
 
-function Stop-Process {
+function global:Stop-Process {
     param(
         [Parameter(ValueFromPipeline = $true)]
         $InputObject,
@@ -511,7 +605,7 @@ function Stop-Process {
     return Microsoft.PowerShell.Management\Stop-Process @PSBoundParameters -ErrorAction SilentlyContinue
 }
 
-function Start-Process {
+function global:Start-Process {
     param(
         [string]$FilePath,
         [string]$ArgumentList,
@@ -521,6 +615,8 @@ function Start-Process {
     $normalizedArgList = $ArgumentList
     if ($ArgumentList -like "*LocalAppData\Microsoft\WindowsApps*") {
         $normalizedArgList = $ArgumentList -replace '[A-Z]:\\.*\\TestCase_\d+\\LocalAppData', 'LocalAppData'
+    } elseif ($ArgumentList -match '[A-Z]:\\.*\\TESTCA~[^\\]+\\LOCALA~1\\MICROS~1\\WINDOW~1') {
+        $normalizedArgList = $ArgumentList -replace '[A-Z]:\\.*\\TESTCA~[^\\]+\\LOCALA~1\\MICROS~1\\WINDOW~1', 'LocalAppData\Microsoft\WindowsApps'
     }
     $global:CalledCmdlets.Add("Start-Process: $FilePath $normalizedArgList")
     if ($FilePath -eq "reg.exe" -and $ArgumentList -like "import*") {
@@ -546,7 +642,7 @@ function Start-Process {
     }
 }
 
-function New-Object {
+function global:New-Object {
     param(
         [string]$TypeName,
         [object[]]$ArgumentList,
@@ -581,32 +677,32 @@ function New-Object {
 }
 
 # Scheduled Tasks Mocks
-function New-ScheduledTaskAction {
+function global:New-ScheduledTaskAction {
     param($Execute, $Argument)
     $global:CalledCmdlets.Add("New-ScheduledTaskAction: $Execute $Argument")
     return "MockAction"
 }
-function New-ScheduledTaskTrigger {
+function global:New-ScheduledTaskTrigger {
     param([switch]$AtLogon, $User)
     $global:CalledCmdlets.Add("New-ScheduledTaskTrigger: AtLogon for $User")
     return "MockTrigger"
 }
-function New-ScheduledTaskPrincipal {
+function global:New-ScheduledTaskPrincipal {
     param($UserId, $LogonType)
     $global:CalledCmdlets.Add("New-ScheduledTaskPrincipal: $UserId $LogonType")
     return "MockPrincipal"
 }
-function New-ScheduledTaskSettingsSet {
+function global:New-ScheduledTaskSettingsSet {
     param([switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries)
     $global:CalledCmdlets.Add("New-ScheduledTaskSettingsSet")
     return "MockSettings"
 }
-function New-ScheduledTask {
+function global:New-ScheduledTask {
     param($Action, $Trigger, $Principal, $Settings)
     $global:CalledCmdlets.Add("New-ScheduledTask")
     return "MockTask"
 }
-function Register-ScheduledTask {
+function global:Register-ScheduledTask {
     param($TaskName, $InputObject, [switch]$Force)
     $global:CalledCmdlets.Add("Register-ScheduledTask: $TaskName")
     if ($global:RegisterScheduledTaskFail) {
@@ -616,7 +712,7 @@ function Register-ScheduledTask {
 }
 
 # Interactive menu prompt mock
-function Read-Host {
+function global:Read-Host {
     param($Prompt)
     if ($global:MockInputs -and $global:MockInputs.Count -gt 0) {
         $choice = $global:MockInputs[0]
@@ -626,7 +722,7 @@ function Read-Host {
     }
     return "6"
 }
-function Read-HostSafe {
+function global:Read-HostSafe {
     param($Prompt)
     return Read-Host -Prompt $Prompt
 }
@@ -637,17 +733,22 @@ $global:ResetAppxPackageFail = $setup.ResetAppxPackageFail
 $global:RegisterScheduledTaskFail = $setup.RegisterScheduledTaskFail
 
 # Execute script and collect final state
+$childExitCode = 0
 try {
     $params = $args
-    . .\Repair-WingetAlias.ps1 @params
+    $childExitCode = . .\Repair-WingetAlias.ps1 @params
+    if ($null -eq $childExitCode) { $childExitCode = 0 }
 } catch {
     $global:CalledCmdlets.Add("Exception: $_")
+    $childExitCode = 1
 } finally {
     $WhatIfPreference = $false
+    $targetSid = "S-1-5-21-Mock-Sid-12345"
+    $usersKey = [MockRegistry]::Users.OpenSubKey("$targetSid\Environment")
     $finalState = @{
         Registry = @{
-            PATH = $envKey.GetValue("PATH")
-            PATH_PreRepairBackup = $envKey.GetValue("PATH_PreRepairBackup")
+            PATH = if ($setup.MockIsAdmin -eq "true" -and $usersKey) { $usersKey.GetValue("PATH") } else { $envKey.GetValue("PATH") }
+            PATH_PreRepairBackup = if ($setup.MockIsAdmin -eq "true" -and $usersKey) { $usersKey.GetValue("PATH_PreRepairBackup") } else { $envKey.GetValue("PATH_PreRepairBackup") }
         }
         AliasSettings = @{}
         Files = @{}
@@ -659,16 +760,16 @@ try {
         $mockKey = [MockRegistry]::CurrentUser.OpenSubKey($regKeyPath)
         if ($mockKey) {
             $stateVal = $mockKey.GetValue("State")
-            $finalState.AliasSettings[$key] = @{ State = $stateVal }
+            $finalState['AliasSettings'][$key] = @{ State = $stateVal }
         } else {
-            $finalState.AliasSettings[$key] = $null
+            $finalState['AliasSettings'][$key] = $null
         }
     }
     
     $winAppsPath = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
     if (Test-Path $winAppsPath) {
         foreach ($file in Get-ChildItem $winAppsPath) {
-            $finalState.Files[$file.Name] = @{
+            $finalState['Files'][$file.Name] = @{
                 Exists = $true
                 IsReparsePoint = (($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq [System.IO.FileAttributes]::ReparsePoint)
                 Length = $file.Length
@@ -677,6 +778,7 @@ try {
     }
     
     $finalState | ConvertTo-Json -Depth 5 | Out-File -FilePath "final_state.json" -Encoding utf8
+    exit $childExitCode
 }
 '@
 
@@ -727,7 +829,7 @@ Add-Test -Id 5 -Tier "Tier 1" -Name "Redundant backup created" `
     -Description "Verify backup registry value is created before modification." `
     -Setup { @{ Registry = @{ PATH = "C:\Windows" } } } `
     -Parameters @("-Force") `
-    -Assertion { param($state, $exitCode, $testDir) (Get-ChildItem $testDir -Filter "Repair-WingetAlias_Backup_*.reg").Count -gt 0 }
+    -Assertion { param($state, $exitCode, $testDir) (Get-ChildItem (Join-Path $testDir "LocalAppData\WingetDiagnosticTool") -Filter "Repair-WingetAlias_Backup_*.reg").Count -gt 0 }
 
 # Feature B: App Execution Alias Settings
 Add-Test -Id 6 -Tier "Tier 1" -Name "Alias key missing" `
@@ -1137,7 +1239,7 @@ Add-Test -Id 55 -Tier "Tier 3" -Name "Rollback with no backups" `
         } 
     } } `
     -Parameters @("-Rollback") `
-    -Assertion { param($state, $exitCode) $exitCode -eq 0 }
+    -Assertion { param($state, $exitCode) $exitCode -eq 1 }
 
 
 # --- TIER 4: REAL-WORLD APPLICATION SCENARIOS (5 TESTS) ---
@@ -1218,13 +1320,89 @@ Add-Test -Id 60 -Tier "Tier 4" -Name "Verification fails post-repair" `
         $state.CalledCmdlets -contains "Stop-Process: OpenWith"
     }
 
+Add-Test -Id 61 -Tier "Tier 4" -Name "Ghost pointer diagnostics check" `
+    -Description "Verify that missing winget.exe with enabled registry alias results in GHOST POINTER status and triggers re-registration." `
+    -Setup { @{ 
+        Files = @{} 
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 }
+        }
+        AppxPackages = @(
+            @{
+                Name = "Microsoft.DesktopAppInstaller"
+                PackageFullName = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe"
+                InstallLocation = "LocalAppData\Microsoft\WindowsApps"
+                Version = "1.22.11261.0"
+                Status = "Ok"
+            }
+        )
+    } } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode) 
+        $state.CalledCmdlets -contains "Add-AppxPackage: -Register LocalAppData\Microsoft\WindowsApps\AppxManifest.xml"
+    }
+
+Add-Test -Id 62 -Tier "Tier 4" -Name "Session isolation WMI filter" `
+    -Description "Verify that Get-TargetUserAndSid filters explorer.exe by SessionId." `
+    -Setup { @{ 
+        MockIsAdmin = "true"
+    } } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode) 
+        $matchedCall = $state.CalledCmdlets | Where-Object { $_ -match "Get-CimInstance: ClassName=Win32_Process Filter=Name = 'explorer.exe' and SessionId = \d+" }
+        $null -ne $matchedCall
+    }
+
+Add-Test -Id 63 -Tier "Tier 4" -Name "Non-interactive Auto-Force check" `
+    -Description "Verify that running non-interactively without parameters defaults to Auto-Force and executes repair." `
+    -Setup { @{ Registry = @{ PATH = "C:\Windows\system32" }; NonInteractive = "true" } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode) $state.Registry.PATH -like "*%LOCALAPPDATA%\Microsoft\WindowsApps*" }
+
+Add-Test -Id 64 -Tier "Tier 4" -Name "Empty backup rollback handling" `
+    -Description "Verify that an empty/malformed backup registry file is handled gracefully during rollback." `
+    -Setup { @{ Registry = @{ PATH = "C:\Windows\system32" } } } `
+    -Parameters @("-Rollback") `
+    -Assertion { param($state, $exitCode) $exitCode -eq 1 }
+
+Add-Test -Id 65 -Tier "Tier 4" -Name "Instant crash recovery" `
+    -Description "Verify that if winget.exe exits instantly with code 1, the diagnostic check still passes or recovers gracefully." `
+    -Setup { @{ 
+        WingetBehavior = "fail"
+        Files = @{ 
+            "winget.exe" = @{ IsReparsePoint = $true }
+            "wingetdev.exe" = @{ IsReparsePoint = $true }
+        }
+    } } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode) $exitCode -eq 0 }
+
+Add-Test -Id 66 -Tier "Tier 4" -Name "ProfileList inaccessible fallback" `
+    -Description "Verify that profile resolution falls back to env:USERPROFILE if HKLM ProfileList key is not found." `
+    -Setup { @{ 
+        MockIsAdmin = "true"
+        Registry = @{ PATH = "C:\Windows\system32" }
+    } } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode) $state.Registry.PATH -like "*%LOCALAPPDATA%\Microsoft\WindowsApps*" }
+
 
 # 4. Execution loop
+if ($PSBoundParameters.ContainsKey('Id')) {
+    $TestCases = @($TestCases | Where-Object { $_.Id -in $Id })
+}
+if ($PSBoundParameters.ContainsKey('Tier')) {
+    $TestCases = @($TestCases | Where-Object { $_.Tier -in $Tier })
+}
+if ($PSBoundParameters.ContainsKey('Name')) {
+    $TestCases = @($TestCases | Where-Object { $_.Name -like "*$Name*" })
+}
+
 $results = @()
 $failedCount = 0
 $passedCount = 0
 
-Write-Host "Running 60 isolated test cases..." -ForegroundColor Cyan
+Write-Host "Running $($TestCases.Count) isolated test cases..." -ForegroundColor Cyan
 
 foreach ($tc in $TestCases) {
     Write-Host "Running Test $($tc.Id): $($tc.Name)... " -NoNewline -ForegroundColor White
@@ -1239,6 +1417,7 @@ foreach ($tc in $TestCases) {
     
     # Copy script and mock winget
     Copy-Item -Path $ScriptToTest -Destination $testDir -Force
+    Copy-Item -Path (Join-Path $ProjectRoot "WingetDiagnosticTool") -Destination $testDir -Recurse -Force
     $winAppsDir = New-Item -ItemType Directory -Path (Join-Path $testDir "LocalAppData\Microsoft\WindowsApps") -Force
     Copy-Item -Path $wingetExePath -Destination (Join-Path $winAppsDir "winget.exe") -Force
     Copy-Item -Path $wingetExePath -Destination (Join-Path $winAppsDir "wingetdev.exe") -Force
@@ -1251,9 +1430,17 @@ foreach ($tc in $TestCases) {
     $setupData = & $tc.Setup
     
     # For test 54 specifically, let's create the backup file in setupData's virtual disk
+    # Setup test-specific logs and redundant backups in redirected DiagnosticDataDir
+    $diagnosticDataDir = Join-Path $testDir "LocalAppData\WingetDiagnosticTool"
+    if (-not (Test-Path $diagnosticDataDir)) {
+        New-Item -ItemType Directory -Path $diagnosticDataDir -Force | Out-Null
+    }
     if ($tc.Id -eq 54) {
         $backupContent = 'Windows Registry Editor Version 5.00' + "`r`n`r`n" + '[HKEY_CURRENT_USER\Environment]' + "`r`n" + '"PATH"="C:\\Windows\\FromFile"' + "`r`n"
-        [System.IO.File]::WriteAllText((Join-Path $testDir "Repair-WingetAlias_Backup_20260618_120000.reg"), $backupContent)
+        [System.IO.File]::WriteAllText((Join-Path $diagnosticDataDir "Repair-WingetAlias_Backup_20260618_120000.reg"), $backupContent)
+    }
+    if ($tc.Id -eq 64) {
+        [System.IO.File]::WriteAllText((Join-Path $diagnosticDataDir "Repair-WingetAlias_Backup_20260618_120000.reg"), "")
     }
 
     if ($null -eq $setupData) {
@@ -1297,10 +1484,15 @@ foreach ($tc in $TestCases) {
     }
     $psi.Arguments = $escapedArgs -join " "
     
+    $psi.EnvironmentVariables["MOCK_DLL_PATH"] = $mockDllPath
     $psi.EnvironmentVariables["MOCK_IS_ADMIN"] = $isAdminVal
     $psi.EnvironmentVariables["WINGET_BEHAVIOR"] = $behaviorVal
     $psi.EnvironmentVariables["LOCALAPPDATA"] = (Join-Path $testDir "LocalAppData")
     $psi.EnvironmentVariables["USERPROFILE"] = $testDir
+    $psi.EnvironmentVariables["IsTestRunner"] = "true"
+    if ($setupData.NonInteractive) {
+        $psi.EnvironmentVariables["NON_INTERACTIVE"] = $setupData.NonInteractive
+    }
     
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $psi
@@ -1345,13 +1537,13 @@ function Convert-PSCustomObjectToHashtable {
         }
     } else {
         Write-Host "Missing final_state.json! Script execution log:" -ForegroundColor Red
-        $logFile = Join-Path $testDir "Repair-WingetAlias.log"
+        $logFile = Join-Path $testDir "LocalAppData\WingetDiagnosticTool\Repair-WingetAlias.log"
         if (Test-Path $logFile) {
             Get-Content $logFile | Write-Host -ForegroundColor DarkGray
         } else {
             Write-Host "No Repair-WingetAlias.log found." -ForegroundColor DarkRed
         }
-        $transcriptFile = Join-Path $testDir "Repair-WingetAlias_Transcript.log"
+        $transcriptFile = Join-Path $testDir "LocalAppData\WingetDiagnosticTool\Repair-WingetAlias_Transcript.log"
         if (Test-Path $transcriptFile) {
             Write-Host "Transcript Log:" -ForegroundColor Red
             Get-Content $transcriptFile | Write-Host -ForegroundColor DarkRed
@@ -1388,8 +1580,8 @@ Write-Host "==================================================" -ForegroundColor
 
 $resultsByTier = $results | Group-Object Tier
 foreach ($group in $resultsByTier) {
-    $tierPassed = ($group.Group | Where-Object { $_.Status -eq "PASS" }).Count
-    $tierFailed = ($group.Group | Where-Object { $_.Status -eq "FAIL" }).Count
+    $tierPassed = @($group.Group | Where-Object { $_.Status -eq "PASS" }).Count
+    $tierFailed = @($group.Group | Where-Object { $_.Status -eq "FAIL" }).Count
     Write-Host "$($group.Name): $tierPassed Passed, $tierFailed Failed" -ForegroundColor $(if ($tierFailed -eq 0) { "Green" } else { "Red" })
 }
 

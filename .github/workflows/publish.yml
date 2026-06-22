@@ -1,0 +1,37 @@
+name: Publish to PowerShell Gallery
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Run static code analysis
+        shell: powershell
+        run: |
+          $analyzerResults = Invoke-ScriptAnalyzer -Path .\WingetDiagnosticTool -Recurse -Severity Error, Warning
+          if ($analyzerResults) {
+              $analyzerResults | Format-Table
+              throw "PSScriptAnalyzer found rule violations. Build failed."
+          }
+          Write-Host "PSScriptAnalyzer passed cleanly." -ForegroundColor Green
+
+      - name: Publish Module to PSGallery
+        shell: powershell
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          Publish-Module -Path .\WingetDiagnosticTool -NuGetApiKey $env:PSGALLERY_API_KEY -ErrorAction Stop

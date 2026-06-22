@@ -16,8 +16,6 @@ param(
     [string]$Version
 )
 
-$ErrorActionPreference = "Stop"
-
 # Format the tag name
 $TagName = "v$Version"
 
@@ -38,15 +36,25 @@ if ($null -ne $gitStatus -and $gitStatus.Length -gt 0) {
 }
 Write-Host "Git working tree is clean." -ForegroundColor Green
 
-# Step 2: Execute E2E testing framework
-Write-Host "[2/4] Executing local E2E test suite..." -ForegroundColor Cyan
 $ScriptDir = $PSScriptRoot
 if ([string]::IsNullOrEmpty($ScriptDir)) {
     $ScriptDir = Get-Location
 }
+
+# Update version string in manifest
+$psd1Path = Join-Path $ScriptDir "WingetDiagnosticTool\WingetDiagnosticTool.psd1"
+if (Test-Path $psd1Path -ErrorAction SilentlyContinue) {
+    Write-Host "Updating module manifest version to $Version..." -ForegroundColor Cyan
+    $manifestContent = Get-Content $psd1Path -Raw -ErrorAction Stop
+    $manifestContent = $manifestContent -replace "ModuleVersion\s*=\s*'[^']+'", "ModuleVersion = '$Version'"
+    $manifestContent | Out-File $psd1Path -Encoding utf8 -Force -ErrorAction Stop
+}
+
+# Step 2: Execute E2E testing framework
+Write-Host "[2/4] Executing local E2E test suite..." -ForegroundColor Cyan
 $TestRunnerPath = Join-Path $ScriptDir "tests\Run-Tests.ps1"
 
-if (-not (Test-Path $TestRunnerPath)) {
+if (-not (Test-Path $TestRunnerPath -ErrorAction SilentlyContinue)) {
     Write-Host "[ERROR] Test runner script not found at: $TestRunnerPath" -ForegroundColor Red
     exit 1
 }
@@ -55,9 +63,26 @@ if (-not (Test-Path $TestRunnerPath)) {
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $TestRunnerPath
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Local testing framework failed. Aborting release." -ForegroundColor Red
+    # Discard manifest changes to leave tree clean on failure
+    git checkout -- $psd1Path
     exit 1
 }
 Write-Host "All test cases passed successfully." -ForegroundColor Green
+
+# Run wiki documentation update automation
+$ImageSource = "C:\Users\ajjuk\.gemini\antigravity\brain\5f3390e5-8c53-44ac-9a6b-2ba48e946b18\successful_test_run_1782060712208.png"
+$WikiSyncPath = Join-Path $ScriptDir "Update-Wiki.ps1"
+if (Test-Path $WikiSyncPath -ErrorAction SilentlyContinue) {
+    Write-Host "Executing automated wiki documentation sync..." -ForegroundColor Cyan
+    & $WikiSyncPath -ImageSource $ImageSource
+}
+
+# Commit manifest changes
+if (Test-Path $psd1Path -ErrorAction SilentlyContinue) {
+    Write-Host "Committing version bump changes..." -ForegroundColor Cyan
+    git add $psd1Path
+    git commit -m "chore(release): bump version to $Version"
+}
 
 # Step 3: Push current main branch to upstream remote
 Write-Host "[3/4] Pushing main branch upstream..." -ForegroundColor Cyan

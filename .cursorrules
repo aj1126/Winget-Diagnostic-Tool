@@ -1,0 +1,10 @@
+# Cursor Rules for Winget Diagnostic Tool
+
+# Inheritance Reference
+# Imports: C:/Users/ajjuk/.gemini/config/AGENTS.md
+
+# Project-Specific Constraints
+- **Do Not Assign to Automatic Variables**: Never assign values directly to PowerShell built-in automatic variables (such as `$PSScriptRoot`, `$ErrorActionPreference`, or `$args`). Copy to custom local variables instead (e.g. `$ScriptDir = $PSScriptRoot`).
+- **Sandbox & Registry Mocks**: Registry changes or system file deletions must use isolated mock paths or transactional safety paths (`-DryRun`).
+- **Low-Level FS Purges**: Bypassing locked NTFS reparse points must be done using `[System.IO.File]::Delete()`.
+- **Test Selection**: Skip integration tests (`tests/Run-Tests.ps1`) for non-code changes (documentation, `.vscode/settings.json`, `.agents/AGENTS.md`). Only run tests when functional scripts (`Repair-WingetAlias.ps1`, `Invoke-Release.ps1`, `tests/Run-Tests.ps1`) are modified.
