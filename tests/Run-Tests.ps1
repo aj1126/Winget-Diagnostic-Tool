@@ -1386,6 +1386,20 @@ Add-Test -Id 66 -Tier "Tier 4" -Name "ProfileList inaccessible fallback" `
     -Parameters @("-Force") `
     -Assertion { param($state, $exitCode) $state.Registry.PATH -like "*%LOCALAPPDATA%\Microsoft\WindowsApps*" }
 
+Add-Test -Id 67 -Tier "Tier 4" -Name "Healthy system with wingetdev.exe missing" `
+    -Description "Verify that diagnostics pass and no repairs are performed when wingetdev.exe is missing but winget.exe is healthy." `
+    -Setup { @{ 
+        Registry = @{ PATH = "C:\Windows;%LOCALAPPDATA%\Microsoft\WindowsApps" }
+        Files = @{ 
+            "winget.exe" = @{ IsReparsePoint = $true }
+        }
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 }
+        }
+    } } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode) -not ($state.CalledCmdlets -contains "Set-ItemProperty") -and $exitCode -eq 0 }
+
 
 # 4. Execution loop
 if ($PSBoundParameters.ContainsKey('Id')) {

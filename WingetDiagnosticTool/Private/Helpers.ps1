@@ -1009,8 +1009,12 @@ function Run-Diagnostics {
                 Write-Log -Message "Alias File Check [$alias]: File exists but is NOT a reparse point (size: $size bytes). Stubs are corrupted!" -Level "Error"
             }
         } else {
-            $aliasState = "FAIL"
-            Write-Log -Message "Alias File Check [$alias]: File does not exist!" -Level "Error"
+            if ($alias -eq "wingetdev.exe") {
+                Write-Log -Message "Alias File Check [$alias]: File does not exist (optional dev alias)." -Level "Info"
+            } else {
+                $aliasState = "FAIL"
+                Write-Log -Message "Alias File Check [$alias]: File does not exist!" -Level "Error"
+            }
         }
     }
     
