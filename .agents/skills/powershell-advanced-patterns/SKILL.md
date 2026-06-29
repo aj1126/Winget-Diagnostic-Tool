@@ -162,7 +162,35 @@ foreach ($alias in $aliases) {
 
 ---
 
-## 5. Verification Checklist
+## 5. Shadowing Executable Detection & Remediation in PATH
+
+When a Windows execution alias (e.g., `winget.exe` in `%LOCALAPPDATA%\Microsoft\WindowsApps`) is intercepted by a zero-byte or corrupt shadowing file placed in a directory that precedes the alias folder in the system `PATH` (such as `C:\Windows\System32`), it creates an execution loop or blocks the application.
+
+### Recommended Pattern
+
+1. **PATH Parsing and Precedence Scan**:
+   Parse the environment `PATH`, identify the index of the official directory, and scan only the preceding directories for matching names:
+   ```powershell
+   $procPaths = $env:Path -split ";"
+   $officialAppsPath = [System.IO.Path]::GetFullPath("$env:LOCALAPPDATA\Microsoft\WindowsApps").TrimEnd('\')
+
+   $precedingDirs = @()
+   foreach ($path in $procPaths) {
+       if ([string]::IsNullOrWhiteSpace($path)) { continue }
+       $normalized = [System.IO.Path]::GetFullPath($path).TrimEnd('\')
+       if ($normalized -ieq $officialAppsPath) {
+           break
+       }
+       $precedingDirs += $normalized
+   }
+   ```
+
+2. **Remediation**:
+   Clean up detected shadowing files using a robust hierarchy (e.g., trying reparse point deletion, followed by direct file deletion and ACL takeover if necessary).
+
+---
+
+## 6. Verification Checklist
 
 - [ ] Audit the codebase for fully qualified type names (`[System.*]`) used to invoke static methods, ensuring they are mapped to reference variables or type accelerators.
 - [ ] Verify that all mock helper functions in the test runner/sandboxes are defined in the `global:` scope.
@@ -172,3 +200,5 @@ foreach ($alias in $aliases) {
 - [ ] Validate that file deletion routines on potentially locked system files implement the ACL remediation fallback (`takeown` / `icacls`).
 - [ ] Check that missing optional developer/pre-release assets do not mark the entire diagnostic suite status as `FAIL`.
 - [ ] Ensure that existing but corrupted optional components are still properly identified and queued for cleanup/repair.
+- [ ] Verify that the diagnostic checks parse the `PATH` environment variable correctly and only flag files that precede the official execution alias directory.
+- [ ] Verify that shadowing files are deleted using a robust deletion hierarchy (reparse point deletion fallback, followed by direct deletion).
