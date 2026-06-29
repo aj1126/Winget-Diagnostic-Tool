@@ -53,10 +53,11 @@ function Invoke-WingetDiagnosticMenu {
             }
             "4" {
                 Clear-Host
-                $aliasKeys = @(
-                    "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe",
-                    "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\wingetdev.exe"
-                )
+                $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
+                $aliases = Get-DeclaredExecutionAliases -pkg $pkg
+                $aliasKeys = foreach ($alias in $aliases) {
+                    "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\$alias"
+                }
                 foreach ($aliasKey in $aliasKeys) {
                     $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
                     if (Test-UserRegistryKey -SubKeyPath $subKey) {
