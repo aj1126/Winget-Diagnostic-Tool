@@ -1052,6 +1052,60 @@ function Run-Diagnostics {
     $loopResult = Test-OpenWithLoop
     $loopDetected = ($loopResult -eq $true -or $loopResult -eq "GHOST_POINTER")
     
+    # 7. Shadowing files check
+    $shadowState = "PASS"
+    $script:ShadowingFiles = @()
+    $targetLocalAppData = Get-TargetUserLocalFolder "AppData\Local"
+    $expandedTarget = Get-NormalizedPath -Path "$targetLocalAppData\Microsoft\WindowsApps"
+    $windowsAppsVar = "%LOCALAPPDATA%\Microsoft\WindowsApps"
+    
+    $procPaths = $env:Path -split ";"
+    $targetIndex = -1
+    $normalizedPaths = @()
+    for ($i = 0; $i -lt $procPaths.Count; $i++) {
+        if ([string]::IsNullOrWhiteSpace($procPaths[$i])) { continue }
+        $norm = Get-NormalizedPath -Path $procPaths[$i]
+        $normalizedPaths += $norm
+        if ($norm -ieq $expandedTarget -or $norm -ieq (Get-NormalizedPath -Path $windowsAppsVar)) {
+            if ($targetIndex -eq -1) {
+                $targetIndex = $normalizedPaths.Count - 1
+            }
+        }
+    }
+    
+    $checkDirs = @()
+    if ($targetIndex -ge 0) {
+        for ($i = 0; $i -lt $targetIndex; $i++) {
+            $checkDirs += $normalizedPaths[$i]
+        }
+    } else {
+        $checkDirs = $normalizedPaths
+    }
+    
+    $shadowNames = @("winget", "winget.exe", "winget.cmd", "winget.bat")
+    foreach ($dir in $checkDirs) {
+        if (-not (Test-Path $dir)) { continue }
+        foreach ($name in $shadowNames) {
+            $filePath = Join-Path $dir $name
+            if ([System.IO.File]::Exists($filePath)) {
+                $parentNorm = Get-NormalizedPath -Path (Split-Path -Parent $filePath)
+                if ($parentNorm -ine $expandedTarget) {
+                    $script:ShadowingFiles += $filePath
+                    $shadowState = "FAIL"
+                }
+            }
+        }
+    }
+    
+    if ($script:ShadowingFiles.Count -gt 0) {
+        Write-Log -Message "Shadowing Check: Found $($script:ShadowingFiles.Count) shadowing winget file(s) that block the official alias:" -Level "Error"
+        foreach ($sf in $script:ShadowingFiles) {
+            Write-Log -Message "  - $sf" -Level "Error"
+        }
+    } else {
+        Write-Log -Message "Shadowing Check: No shadowing winget files found in PATH." -Level "Success"
+    }
+    
     Write-Log -Message "==================================================" -Level "Info"
     Write-Log -Message "                  SUMMARY STATUS                  " -Level "Info"
     Write-Log -Message "  - Environment PATH:  $pathState" -Level "Info"
@@ -1059,10 +1113,79 @@ function Run-Diagnostics {
     Write-Log -Message "  - Execution Aliases: $aliasState" -Level "Info"
     Write-Log -Message "  - Alias Settings:    $settingsState" -Level "Info"
     Write-Log -Message "  - Loop Detected:     $(if ($loopResult -eq $true) { 'YES (FAIL)' } elseif ($loopResult -eq 'GHOST_POINTER') { 'GHOST POINTER (FAIL)' } else { 'NO (PASS)' })" -Level "Info"
+    Write-Log -Message "  - Shadowing Files:   $shadowState" -Level "Info"
     Write-Log -Message "==================================================" -Level "Info"
     
-    $needsRepair = ($pathState -eq "FAIL" -or $pkgState -eq "FAIL" -or $aliasState -eq "FAIL" -or $settingsState -eq "FAIL" -or $loopDetected)
+    $needsRepair = ($pathState -eq "FAIL" -or $pkgState -eq "FAIL" -or $aliasState -eq "FAIL" -or $settingsState -eq "FAIL" -or $loopDetected -or $shadowState -eq "FAIL")
     return $needsRepair
+}
+
+# Check and remove shadowing winget files from PATH
+function Repair-ShadowingFiles {
+    Write-Log -Message "Checking and removing shadowing winget files..." -Level "Info"
+    $shadowFiles = $script:ShadowingFiles
+    if ($null -eq $shadowFiles -or $shadowFiles.Count -eq 0) {
+        $shadowFiles = @()
+        $targetLocalAppData = Get-TargetUserLocalFolder "AppData\Local"
+        $expandedTarget = Get-NormalizedPath -Path "$targetLocalAppData\Microsoft\WindowsApps"
+        $windowsAppsVar = "%LOCALAPPDATA%\Microsoft\WindowsApps"
+        
+        $procPaths = $env:Path -split ";"
+        $targetIndex = -1
+        $normalizedPaths = @()
+        for ($i = 0; $i -lt $procPaths.Count; $i++) {
+            if ([string]::IsNullOrWhiteSpace($procPaths[$i])) { continue }
+            $norm = Get-NormalizedPath -Path $procPaths[$i]
+            $normalizedPaths += $norm
+            if ($norm -ieq $expandedTarget -or $norm -ieq (Get-NormalizedPath -Path $windowsAppsVar)) {
+                if ($targetIndex -eq -1) {
+                    $targetIndex = $normalizedPaths.Count - 1
+                }
+            }
+        }
+        
+        $checkDirs = @()
+        if ($targetIndex -ge 0) {
+            for ($i = 0; $i -lt $targetIndex; $i++) {
+                $checkDirs += $normalizedPaths[$i]
+            }
+        } else {
+            $checkDirs = $normalizedPaths
+        }
+        
+        $shadowNames = @("winget", "winget.exe", "winget.cmd", "winget.bat")
+        foreach ($dir in $checkDirs) {
+            if (-not (Test-Path $dir)) { continue }
+            foreach ($name in $shadowNames) {
+                $filePath = Join-Path $dir $name
+                if ([System.IO.File]::Exists($filePath)) {
+                    $parentNorm = Get-NormalizedPath -Path (Split-Path -Parent $filePath)
+                    if ($parentNorm -ine $expandedTarget) {
+                        $shadowFiles += $filePath
+                    }
+                }
+            }
+        }
+    }
+    
+    $success = $true
+    if ($shadowFiles.Count -gt 0) {
+        foreach ($sf in $shadowFiles) {
+            if (Test-Path $sf) {
+                Write-Log -Message "Shadowing file found at $sf. Attempting removal..." -Level "Warn"
+                Remove-ReparsePoint -Path $sf
+                if (Test-Path $sf) {
+                    Write-Log -Message "Failed to remove shadowing file: $sf. Administrator privileges might be required." -Level "Error"
+                    $success = $false
+                } else {
+                    Write-Log -Message "Successfully removed shadowing file: $sf." -Level "Success"
+                }
+            }
+        }
+    } else {
+        Write-Log -Message "No shadowing winget files found to clean." -Level "Success"
+    }
+    return $success
 }
 
 # Run full automatic repair routine
@@ -1156,6 +1279,10 @@ function Repair-All {
             Write-Log -Message "AppX package registration repair failed." -Level "Error"
         }
     }
+    
+    # 5. Clean shadowing files
+    Write-Log -Message "[Step 5/5] Checking and removing shadowing winget files..." -Level "Info"
+    $shadowSuccess = Repair-ShadowingFiles
     
     Write-Log -Message "Remediation actions finished. Testing Winget execution..." -Level "Info"
     

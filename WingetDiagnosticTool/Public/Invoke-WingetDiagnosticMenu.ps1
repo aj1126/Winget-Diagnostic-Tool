@@ -23,11 +23,12 @@ function Invoke-WingetDiagnosticMenu {
         Write-Host "[2] Apply Path Repair (Add WindowsApps to PATH)"
         Write-Host "[3] Reset / Re-register DesktopAppInstaller Package"
         Write-Host "[4] Enable App Execution Aliases (Registry Settings)"
-        Write-Host "[5] Roll Back Previous Changes"
-        Write-Host "[6] Exit"
+        Write-Host "[5] Clean Shadowing / Blocking Winget Files (e.g. in System32)"
+        Write-Host "[6] Roll Back Previous Changes"
+        Write-Host "[7] Exit"
         Write-Host ""
 
-        $choice = Read-HostSafe "Select an option [1-6]"
+        $choice = Read-HostSafe "Select an option [1-7]"
 
         switch ($choice) {
             "1" {
@@ -72,15 +73,20 @@ function Invoke-WingetDiagnosticMenu {
             }
             "5" {
                 Clear-Host
-                Restore-EnvironmentBackup | Out-Null
+                Repair-ShadowingFiles | Out-Null
                 Read-HostSafe "`nPress Enter to return to menu"
             }
             "6" {
+                Clear-Host
+                Restore-EnvironmentBackup | Out-Null
+                Read-HostSafe "`nPress Enter to return to menu"
+            }
+            "7" {
                 Write-Host "Exiting wizard. Goodbye!" -ForegroundColor Cyan
                 return
             }
             default {
-                Write-Host "Invalid option. Please choose [1-6]" -ForegroundColor Red
+                Write-Host "Invalid option. Please choose [1-7]" -ForegroundColor Red
                 Start-Sleep -Seconds 1
             }
         }
