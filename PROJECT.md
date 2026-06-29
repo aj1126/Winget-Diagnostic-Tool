@@ -1,9 +1,11 @@
 # Project: Winget Diagnostic and Remediation Tool
 
 ## Architecture
+
 The tool is a standalone PowerShell script (`Repair-WingetAlias.ps1`) designed to diagnose and repair the Winget execution alias loop. It must run on both Windows PowerShell 5.1 and PowerShell 7+.
 
 ### Code Layout
+
 - `Repair-WingetAlias.ps1` - Main diagnostic and remediation script.
 - `tests/` - Folder containing the E2E test suite.
 - `tests/Run-Tests.ps1` - Test runner (60 test cases across 4 tiers).
@@ -11,6 +13,7 @@ The tool is a standalone PowerShell script (`Repair-WingetAlias.ps1`) designed t
 - `TEST_READY.md` - Test suite readiness status.
 
 ## Milestones
+
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
 | 1 | Setup & Planning | Initialize briefing, plan, progress, and project files. | None | DONE |
@@ -24,10 +27,10 @@ The tool is a standalone PowerShell script (`Repair-WingetAlias.ps1`) designed t
 | 9 | Milestone v1.1.0 | Deliver session isolation, ghost pointer loop diagnostics, native NTFS repairs, and 62/62 E2E test compliance. | Milestone 8 | DONE |
 | 10 | Milestone v2.0.0 | Convert monolithic script to a PowerShell module, decouple UI menu, CI/CD PSGallery automated publishing, Intune integration, MDT/SCCM exit codes, and 66/66 E2E tests. | Milestone 9 | DONE |
 
-
-
 ## Interface Contracts
+
 ### `Repair-WingetAlias.ps1` CLI Contract
+
 - `-DryRun`: Switch to simulate actions without applying changes.
 - `-Force`: Switch to execute diagnostics and repairs automatically without interactive prompts.
 - `-Rollback`: Switch to restore environment path from backup.
@@ -42,6 +45,7 @@ The tool is a standalone PowerShell script (`Repair-WingetAlias.ps1`) designed t
 - Logging: Writes to `Repair-WingetAlias.log` (rotating at 1MB) and `Repair-WingetAlias_Transcript.log` under the redirected LocalAppData `%LOCALAPPDATA%\WingetDiagnosticTool`.
 
 ### Test Suite Contract
+
 - Command: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Run-Tests.ps1`
 - Expected: exit code `0` when all 66 tests pass.
 - Coverage: Tier 1 (Feature, 25 tests), Tier 2 (Boundary, 25 tests), Tier 3 (Cross-Feature, 5 tests), Tier 4 (Real-World, 11 tests).

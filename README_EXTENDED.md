@@ -10,7 +10,7 @@ A production-grade, single-profile PowerShell utility designed to diagnose and r
 
 ## 1. PRODUCT OVERVIEW
 
-On Windows 11, the `winget` command-line tool executes via an **AppExecutionAlias**—a specialized NTFS reparse point located in `%LOCALAPPDATA%\Microsoft\WindowsApps`. 
+On Windows 11, the `winget` command-line tool executes via an **AppExecutionAlias**—a specialized NTFS reparse point located in `%LOCALAPPDATA%\Microsoft\WindowsApps`.
 
 Corruption of this alias, missing user environment PATH entries, or disabled app execution settings in Windows can lead to:
 1. **The "Open With" Loop**: Windows fails to resolve the execution alias target and continuously prompts the user to select an application to open `winget.exe`.
@@ -19,6 +19,7 @@ Corruption of this alias, missing user environment PATH entries, or disabled app
 This tool provides a safe, non-destructive, and reversible diagnostics and remediation pipeline running entirely within the current user's profile context (no administrative privileges required for core repairs).
 
 ### Compatibility
+
 - **Windows PowerShell 5.1** (default on Windows 11)
 - **PowerShell 7+** (PowerShell Core)
 - Runs safely under standard user, elevated administrator, interactive, and non-interactive contexts.
@@ -30,6 +31,7 @@ This tool provides a safe, non-destructive, and reversible diagnostics and remed
 This section covers interactive use, deployment options, and emergency rollback procedures.
 
 ### Prerequisites & Policy Bypass
+
 By default, Windows blocks script execution. To run this script in an active PowerShell session, bypass the execution policy for the current process:
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
@@ -38,6 +40,7 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 ### Execution Modes
 
 #### Interactive Wizard (Default)
+
 Run the script without arguments to launch the text-based console menu:
 ```powershell
 .\Repair-WingetAlias.ps1
@@ -45,12 +48,14 @@ Run the script without arguments to launch the text-based console menu:
 The wizard will guide you through running diagnostics, performing repairs, setting up logon automation, or rolling back changes.
 
 #### Automated Remediate-All (Unattended)
+
 Perform full diagnostic checks and apply all necessary repairs automatically:
 ```powershell
 .\Repair-WingetAlias.ps1 -Force
 ```
 
 #### Safe Dry-Run (What-If / Dry-Run Mode)
+
 Preview registry changes, file deletions, and package registrations without applying any modifications:
 ```powershell
 .\Repair-WingetAlias.ps1 -DryRun
@@ -59,6 +64,7 @@ Preview registry changes, file deletions, and package registrations without appl
 ```
 
 #### Scheduled Continuous Repair
+
 Ensure `winget` remains functional after Windows Updates or profile changes. The script automatically chooses the safest installation method based on your access level:
 ```powershell
 .\Repair-WingetAlias.ps1 -ScheduleTask
@@ -68,18 +74,21 @@ Ensure `winget` remains functional after Windows Updates or profile changes. The
   `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Repair-WingetAlias.lnk`
 
 #### Background Execution
+
 Run the script as a background PowerShell job:
 ```powershell
 .\Repair-WingetAlias.ps1 -AsJob -Force
 ```
 
 #### Download Missing Package
+
 If the `Microsoft.DesktopAppInstaller` AppX package is completely missing, the script can download and install it from Microsoft's official GitHub releases:
 ```powershell
 .\Repair-WingetAlias.ps1 -Force -DownloadFallback
 ```
 
 #### Rollback Changes
+
 Restore the previous PATH from the backup registry key or `.reg` file:
 ```powershell
 .\Repair-WingetAlias.ps1 -Rollback
@@ -134,6 +143,7 @@ graph TD
 | **Backup Registry Key** | `HKCU:\Environment\PATH_PreRepairBackup` | Stores the original `PATH` string prior to any modifications. Deleted upon rollback. |
 
 ### Advanced Technical Implementations
+
 1. **Safety Registry Operations**: The script directly queries raw Registry values using `.GetValue("PATH", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)` to avoid flattening environment variables during backups.
 2. **Reparse Point Deletion**: Standard PowerShell `Remove-Item` fails on corrupted or orphaned reparse points. The script bypasses this with a robust file deletion hierarchy: native `fsutil reparsepoint delete`, followed by .NET `[System.IO.File]::Delete($Path)`, ACL remediation using `takeown.exe` and `icacls.exe`, and a final fallback to `cmd.exe /c del /f /q`.
 3. **Active Loop Detection**: The script monitors spawned test-executions in a separate background thread with a 3-second timeout. If the process hangs or spawns `OpenWith.exe`, it is flagged as an active execution loop, and the processes are immediately terminated.
@@ -142,6 +152,7 @@ graph TD
 6. **Log Rotation**: Both `Repair-WingetAlias.log` and `Repair-WingetAlias_Transcript.log` are automatically rotated to `.bak` when they exceed 1MB.
 
 ### Branch Governance & Security Gates
+
 To ensure stability, compliance, and regression control in the distribution pipeline, this repository implements the following branch protection rules:
 - **Commit & History Protections**: Force-pushes (`git push --force`) and branch deletions are strictly blocked on the `main` branch to guarantee a permanent, immutable commit ledger.
 - **Mandatory Code Gates**: All integrations targeting the `main` branch require a formal Pull Request (PR) with at least 1 linear code approval.
@@ -155,12 +166,14 @@ To ensure stability, compliance, and regression control in the distribution pipe
 The project includes a comprehensive E2E test suite with **60 test cases** across 4 tiers.
 
 ### Running Tests
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Run-Tests.ps1
 ```
 Exit code `0` indicates all tests passed. Exit code `1` indicates one or more failures.
 
 ### Test Architecture
+
 Each test case runs in a **completely isolated child process** with:
 - Sandboxed temporary directories for registry and file system simulation
 - C# compiled mock executables (`winget.exe` with configurable behaviors: success, fail, hang)
@@ -200,12 +213,14 @@ This section defines specifications for other AI agents to execute, parse, and a
 ### Execution Templates
 
 #### Asynchronous Execution (Fire and Forget)
+
 Agents can launch the script in the background and track the job status:
 ```powershell
 $Job = Start-Job -FilePath ".\Repair-WingetAlias.ps1" -ArgumentList "-Force", "-DownloadFallback"
 ```
 
 #### CLI Log Analysis
+
 The script maintains a structured, time-stamped execution log in `Repair-WingetAlias.log` and a transcript in `Repair-WingetAlias_Transcript.log`.
 
 **Structured Log Regex**:
@@ -214,6 +229,7 @@ The script maintains a structured, time-stamped execution log in `Repair-WingetA
 ```
 
 ### Exit Codes & Diagnostics
+
 The script returns the following process exit codes:
 - **`0`**: Success. All diagnostic checks passed, or repair operations completed and verified successfully.
 - **`1`**: Critical Failure. Encountered access restrictions, registry write permission failures, or the active loop persisted after remediation.
