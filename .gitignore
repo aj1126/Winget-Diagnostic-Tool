@@ -10,5 +10,7 @@ Repair-WingetAlias_Backup_*.reg
 # Ignore agent orchestration state
 .agents/*
 !.agents/skills/
+!.agents/AGENTS.md
+
 
 wiki/

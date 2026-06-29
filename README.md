@@ -9,6 +9,7 @@
 A safe, single-profile utility engineered to diagnose and repair corrupted Windows Package Manager (`winget`) execution aliases, broken NTFS reparse points, and asymmetrical profile registry inconsistencies on Windows 11.
 
 ## ⚡ What It Fixes (The 5-Second Rule)
+
 * **The "Open With" Loop:** Permanently breaks out of the loop where running `winget` repeatedly prompts the user to select a GUI handler app.
 * **Mangled Reparse Points:** Forcefully purges corrupted execution alias files in `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` that standard shell commands fail to delete.
 * **Elevation Profile Mismatches:** Corrects registry `PATH` variables within the active user's environment block, even when executed from an elevated administrative context.
@@ -34,6 +35,7 @@ For headless deployment image scrubbing or silent profile repairs, append the `-
 ```
 
 #### Standardized Exit Codes (MDT/SCCM/Intune)
+
 The script and module return deterministic exit codes to simplify enterprise orchestration:
 * `0`: Success (System healthy or repaired successfully).
 * `1`: Failure (Error during execution or verification failure).
@@ -54,6 +56,7 @@ System utility execution demands strict isolation and deterministic boundaries. 
 ---
 
 ## 📖 Deep Dive & Technical Reference
+
 If you are looking for the original technical deep dives, architectural breakdowns, historical edge cases, or deep platform context regarding this project:
 * 📄 **Read the full guide:** [Extended Documentation Reference](README_EXTENDED.md)
 * 🔍 **Root Causes & Scenarios:** [Use-Cases & Root Cause Analysis](docs/USE_CASES_AND_CAUSES.md)
@@ -61,5 +64,6 @@ If you are looking for the original technical deep dives, architectural breakdow
 ---
 
 ## 🧪 Vetting Status
+
 * **PSScriptAnalyzer Lint Compliance:** 100% Pass (0 Errors, 0 Warnings)
 * **Integration Tests:** 66 / 66 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+

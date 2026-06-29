@@ -9,6 +9,7 @@ This document outlines the test architecture, feature inventory, scenario covera
 The test suite evaluates five core functional domains of the diagnostic and repair tool:
 
 ### A. Environment PATH Management
+
 - **Description**: Inspects and corrects the User's environment PATH variable to ensure the Winget WindowsApps folder (`%LOCALAPPDATA%\Microsoft\WindowsApps`) is present.
 - **Coverage**:
   - Adds the path when missing.
@@ -18,6 +19,7 @@ The test suite evaluates five core functional domains of the diagnostic and repa
   - Saves backups before updating the PATH.
 
 ### B. App Execution Alias Registry Settings
+
 - **Description**: Diagnoses registry keys governing execution aliases under `HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths` and `HKCU:\Software\Microsoft\Windows\CurrentVersion\Appx\AppExecutionAliasSettings`.
 - **Coverage**:
   - Re-enables disabled execution aliases (`State = 0` updated to `State = 1`).
@@ -26,6 +28,7 @@ The test suite evaluates five core functional domains of the diagnostic and repa
   - Simulates DryRun mode where configurations are scanned but not altered.
 
 ### C. Corrupted Stub File Remediation
+
 - **Description**: Detects and deletes invalid, zero-byte, or non-reparse point executable files (stubs) in `%LOCALAPPDATA%\Microsoft\WindowsApps` (e.g., `winget.exe` or `wingetdev.exe`).
 - **Coverage**:
   - Preserves healthy reparse point files.
@@ -34,6 +37,7 @@ The test suite evaluates five core functional domains of the diagnostic and repa
   - Uses `cmd.exe` delete fallback if standard .NET file APIs fail.
 
 ### D. AppX Package Repair
+
 - **Description**: Repairs registration of the parent AppX package `Microsoft.DesktopAppInstaller`.
 - **Coverage**:
   - Re-registers packages via `Add-AppxPackage -Register` and resets via `Reset-AppxPackage`.
@@ -42,6 +46,7 @@ The test suite evaluates five core functional domains of the diagnostic and repa
   - Network-down simulation during MSIX bundle fallback downloads via `-DownloadFallback`.
 
 ### E. Automation & Integration (Scheduled Tasks & Jobs)
+
 - **Description**: Verifies command-line parameters for background tasks, silent automation, and rollback.
 - **Coverage**:
   - Registers scheduled tasks under admin elevation.
@@ -78,6 +83,7 @@ To verify scripts safely without corrupting the host machine's environment, regi
 ```
 
 ### Sandbox & Mocks
+
 - **Process Isolation**: Every test case runs in a unique subdirectory under `Temp\WingetTestMocks`. It copies a localized version of the script and a mock version of `winget.exe` to prevent interaction with the actual machine.
 - **Registry Redirector**: A custom C# `MockRegistry` helper overrides type accelerators (`[Microsoft.Win32.Registry]`, `[Security.Principal.WindowsIdentity]`, `[Security.Principal.WindowsPrincipal]`), intercepting all read/write actions.
 - **Cmdlet Mocking**: Key cmdlets (e.g. `Set-ItemProperty`, `Get-AppxPackage`, `Add-AppxPackage`, `Invoke-WebRequest`, `Get-Process`) are overridden in the child scope. They track invoked arguments and return custom mock records.

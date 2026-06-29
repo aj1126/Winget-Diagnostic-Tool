@@ -210,6 +210,14 @@ public class MockFile {
         if (ForceDeleteFail.Contains(fileName)) {
             return true;
         }
+        if (fileName.Equals("winget", StringComparison.OrdinalIgnoreCase) || 
+            fileName.Equals("winget.exe", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals("winget.cmd", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals("winget.bat", StringComparison.OrdinalIgnoreCase)) {
+            if (path.IndexOf("WingetTestMocks", StringComparison.OrdinalIgnoreCase) < 0) {
+                return false;
+            }
+        }
         return System.IO.File.Exists(path);
     }
 
@@ -217,6 +225,14 @@ public class MockFile {
         string fileName = System.IO.Path.GetFileName(path);
         if (ForceDeleteFail.Contains(fileName)) {
             throw new System.IO.IOException("Simulated deletion failure");
+        }
+        if (fileName.Equals("winget", StringComparison.OrdinalIgnoreCase) || 
+            fileName.Equals("winget.exe", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals("winget.cmd", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals("winget.bat", StringComparison.OrdinalIgnoreCase)) {
+            if (path.IndexOf("WingetTestMocks", StringComparison.OrdinalIgnoreCase) < 0) {
+                return;
+            }
         }
         System.IO.File.Delete(path);
     }
@@ -339,6 +355,9 @@ if ($setup.MockInputs) {
 $envKey = [MockRegistry]::CurrentUser.CreateSubKey("Environment")
 if ($setup.Registry.PATH) {
     $envKey.SetValue("PATH", $setup.Registry.PATH)
+    $currentDir = (Get-Location).Path
+    $expandedPath = $setup.Registry.PATH.Replace("%USERPROFILE%", $currentDir).Replace("%LOCALAPPDATA%", "$currentDir\LocalAppData")
+    $env:Path = $expandedPath
 }
 if ($setup.Registry.PATH_PreRepairBackup) {
     $envKey.SetValue("PATH_PreRepairBackup", $setup.Registry.PATH_PreRepairBackup)
@@ -1301,12 +1320,13 @@ Add-Test -Id 58 -Tier "Tier 4" -Name "Open With loop remediation" `
 Add-Test -Id 59 -Tier "Tier 4" -Name "Interactive menu selection" `
     -Description "Verify that interactive choices (like Run Diagnostics) work." `
     -Setup { @{ 
-        MockInputs = @("1", "6") # choice 1 (Diagnostics), then 6 (Exit)
+        MockInputs = @("1", "5", "7") # choice 1 (Diagnostics), 5 (Clean Shadowing), then 7 (Exit)
     } } `
     -Parameters @() `
     -Assertion { param($state, $exitCode) 
         $state.CalledCmdlets -contains "Read-Host: 1" -and
-        $state.CalledCmdlets -contains "Read-Host: 6"
+        $state.CalledCmdlets -contains "Read-Host: 5" -and
+        $state.CalledCmdlets -contains "Read-Host: 7"
     }
 
 Add-Test -Id 60 -Tier "Tier 4" -Name "Verification fails post-repair" `
@@ -1385,6 +1405,47 @@ Add-Test -Id 66 -Tier "Tier 4" -Name "ProfileList inaccessible fallback" `
     } } `
     -Parameters @("-Force") `
     -Assertion { param($state, $exitCode) $state.Registry.PATH -like "*%LOCALAPPDATA%\Microsoft\WindowsApps*" }
+
+Add-Test -Id 67 -Tier "Tier 4" -Name "Healthy system with wingetdev.exe missing" `
+    -Description "Verify that diagnostics pass and no repairs are performed when wingetdev.exe is missing but winget.exe is healthy." `
+    -Setup { @{ 
+        Registry = @{ PATH = "C:\Windows;%LOCALAPPDATA%\Microsoft\WindowsApps" }
+        Files = @{ 
+            "winget.exe" = @{ IsReparsePoint = $true }
+        }
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 }
+        }
+    } } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode) -not ($state.CalledCmdlets -contains "Set-ItemProperty") -and $exitCode -eq 0 }
+
+Add-Test -Id 68 -Tier "Tier 4" -Name "Shadowing file remediation" `
+    -Description "Verify detection and removal of a shadowing winget executable located in PATH before WindowsApps." `
+    -Setup {
+        $fakeSys32 = Join-Path $testDir "FakeSystem32"
+        if (-not (Test-Path $fakeSys32)) {
+            New-Item -ItemType Directory -Path $fakeSys32 -Force | Out-Null
+        }
+        [System.IO.File]::WriteAllText((Join-Path $fakeSys32 "winget"), "dummy content")
+        @{ 
+            Registry = @{ PATH = "%USERPROFILE%\FakeSystem32;%LOCALAPPDATA%\Microsoft\WindowsApps" }
+            Files = @{ 
+                "winget.exe" = @{ IsReparsePoint = $true }
+            }
+            AliasSettings = @{
+                "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 }
+            }
+        }
+    } `
+    -Parameters @("-Force") `
+    -Assertion { param($state, $exitCode, $testDir) 
+        $fakeFile = Join-Path $testDir "FakeSystem32\winget"
+        $deleted = -not (Test-Path $fakeFile)
+        $deleted -and $exitCode -eq 0
+    }
+
+
 
 
 # 4. Execution loop
