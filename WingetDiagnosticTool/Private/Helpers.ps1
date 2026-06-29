@@ -328,6 +328,42 @@ function Get-TargetAppxPackage {
     return $pkg
 }
 
+# Get the execution aliases declared in the DesktopAppInstaller manifest
+function Get-DeclaredExecutionAliases {
+    param (
+        [object]$pkg
+    )
+    $defaultAliases = @("winget.exe", "wingetdev.exe")
+    if ($null -eq $pkg -or [string]::IsNullOrEmpty($pkg.InstallLocation)) {
+        return $defaultAliases
+    }
+
+    $manifestPath = Join-Path $pkg.InstallLocation "AppxManifest.xml"
+    if (-not (Test-Path $manifestPath)) {
+        return $defaultAliases
+    }
+
+    try {
+        [xml]$xml = Get-Content -Raw -Path $manifestPath -ErrorAction SilentlyContinue
+        $nodes = $xml.SelectNodes("//*[local-name()='ExecutionAlias']")
+        $manifestAliases = foreach ($node in $nodes) {
+            $alias = $node.Alias
+            if (-not [string]::IsNullOrEmpty($alias)) {
+                $alias
+            }
+        }
+        
+        $wingetAliases = $manifestAliases | Where-Object { $_ -like "winget*" }
+        if ($null -ne $wingetAliases -and @($wingetAliases).Count -ge 1) {
+            return @($wingetAliases)
+        }
+    } catch {
+        # Fallback
+    }
+    return $defaultAliases
+}
+
+
 # Clean/Normalize path entries
 function Get-NormalizedPath {
     param (
@@ -987,7 +1023,7 @@ function Run-Diagnostics {
     
     # 4. Alias files check
     $aliasState = "PASS"
-    $aliases = @("winget.exe", "wingetdev.exe")
+    $aliases = Get-DeclaredExecutionAliases -pkg $pkg
     foreach ($alias in $aliases) {
         $aliasPath = Join-Path $dirPath $alias
         $exists = [System.IO.File]::Exists($aliasPath)
@@ -1016,10 +1052,9 @@ function Run-Diagnostics {
     
     # 5. Registry toggles check
     $settingsState = "PASS"
-    $regAliasSettings = @(
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe",
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\wingetdev.exe"
-    )
+    $regAliasSettings = foreach ($alias in $aliases) {
+        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\$alias"
+    }
     foreach ($aliasKey in $regAliasSettings) {
         $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
         if (Test-UserRegistryKey -SubKeyPath $subKey) {
@@ -1084,12 +1119,14 @@ function Repair-All {
         }
     }
     
+    $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
+    $aliases = Get-DeclaredExecutionAliases -pkg $pkg
+    $regAliasSettings = foreach ($alias in $aliases) {
+        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\$alias"
+    }
+
     # 2. Alias Setting Repair
     Write-Log -Message "[Step 2/4] Verifying and re-enabling execution aliases in registry..." -Level "Info"
-    $regAliasSettings = @(
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe",
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\wingetdev.exe"
-    )
     foreach ($aliasKey in $regAliasSettings) {
         $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
         if (Test-UserRegistryKey -SubKeyPath $subKey) {
@@ -1114,7 +1151,6 @@ function Repair-All {
     
     # 3. Clean corrupted alias stubs
     Write-Log -Message "[Step 3/4] Checking and removing corrupted execution alias stubs..." -Level "Info"
-    $aliases = @("winget.exe", "wingetdev.exe")
     foreach ($alias in $aliases) {
         $aliasPath = Join-Path $dirPath $alias
         $exists = [System.IO.File]::Exists($aliasPath)
