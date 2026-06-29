@@ -11,7 +11,7 @@ The E2E test suite for `Repair-WingetAlias.ps1` has been fully implemented and i
 
 ## Test Case Breakdown
 
-A total of **60 E2E test cases** are defined, divided into four tiers:
+A total of **68 E2E test cases** are defined, divided into four tiers:
 
 ### Tier 1: Feature Coverage (25 Tests)
 
@@ -37,10 +37,18 @@ A total of **60 E2E test cases** are defined, divided into four tiers:
 - **Rollback from file backup (Test 54)**: Verifies restoring PATH from `.reg` backup file when registry key is missing.
 - **Rollback with no backups (Test 55)**: Verifies graceful handling of rollback when no backups exist.
 
-### Tier 4: Real-World Application Scenarios (5 Tests)
+### Tier 4: Real-World Application Scenarios (13 Tests)
 
 - **Healthy system diagnostics (Test 56)**: Verifies diagnostics run and complete without triggering any repairs.
 - **Full system repair (Test 57)**: Verifies recovering a completely broken system (missing path, folder, package, corrupt stubs) using DownloadFallback.
 - **Open With loop remediation (Test 58)**: Verifies detecting and terminating active Open With loop.
 - **Interactive menu selection (Test 59)**: Verifies interactive menu flows (e.g. running diagnostics then exiting) by mocking console inputs.
 - **Verification fails post-repair (Test 60)**: Verifies handling of repair when verification fails (e.g., Open With loop persists).
+- **Ghost pointer diagnostics (Test 61)**: Verifies that missing `winget.exe` with enabled registry alias results in GHOST POINTER status and triggers re-registration.
+- **Session isolation WMI filter (Test 62)**: Verifies that `Get-TargetUserAndSid` filters `explorer.exe` by `SessionId`.
+- **Non-interactive Auto-Force Check (Test 63)**: Verifies that running non-interactively without parameters defaults to Auto-Force and executes repair.
+- **Empty backup rollback handling (Test 64)**: Verifies that an empty/malformed backup registry file is handled gracefully during rollback.
+- **Instant crash recovery (Test 65)**: Verifies that if `winget.exe` exits instantly with code 1, the diagnostic check still passes or recovers gracefully without hang.
+- **ProfileList inaccessible fallback (Test 66)**: Verifies that user profile resolution falls back to `env:USERPROFILE` if the HKLM `ProfileList` registry key is inaccessible.
+- **Healthy system with wingetdev.exe missing (Test 67)**: Verifies that diagnostics pass and no repairs are performed when `wingetdev.exe` is missing but `winget.exe` is healthy.
+- **Shadowing file remediation (Test 68)**: Verifies detection and removal of a shadowing `winget` executable located in `PATH` before `WindowsApps`.

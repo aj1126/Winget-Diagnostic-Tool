@@ -4,7 +4,7 @@
 
 A production-grade, single-profile PowerShell utility designed to diagnose and repair Windows Package Manager (`winget`) execution loops, corrupted reparse points, and registry PATH inconsistencies on Windows 11.
 
-> **Status**: ✅ Complete — 60/60 E2E tests passing, forensic audit clean, independently verified.
+> **Status**: ✅ Complete — 68/68 E2E tests passing, forensic audit clean, independently verified.
 
 ---
 
@@ -163,14 +163,23 @@ To ensure stability, compliance, and regression control in the distribution pipe
 
 ## 4. TESTING
 
-The project includes a comprehensive E2E test suite with **60 test cases** across 4 tiers.
+The project includes a comprehensive E2E test suite with **68 test cases** across 4 tiers.
 
-### Running Tests
+### Running and Filtering Tests
+
+To run the entire suite:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Run-Tests.ps1
 ```
-Exit code `0` indicates all tests passed. Exit code `1` indicates one or more failures.
+
+You can also run a filtered subset of tests to speed up execution:
+
+- **Filter by Test ID**: `tests/Run-Tests.ps1 -Id 67,68`
+- **Filter by Tier**: `tests/Run-Tests.ps1 -Tier "Tier 3"`
+- **Filter by Name Pattern**: `tests/Run-Tests.ps1 -Name "Ghost"`
+
+Exit code `0` indicates all targeted tests passed. Exit code `1` indicates one or more failures.
 
 ### Test Architecture
 
@@ -187,8 +196,8 @@ Each test case runs in a **completely isolated child process** with:
 | **Tier 1** | Feature Coverage (PATH, AppX, Aliases, Stubs, Scheduling) | 25 | 100% |
 | **Tier 2** | Boundary & Corner Cases (empty PATH, Unicode, concurrent access) | 25 | 100% |
 | **Tier 3** | Cross-Feature Combinations (rollback, DryRun, backup integrity) | 5 | 100% |
-| **Tier 4** | Real-World Scenarios (healthy system, full repair, Open With loop) | 5 | 100% |
-| **Total** | | **60** | **100%** |
+| **Tier 4** | Real-World Scenarios (healthy system, full repair, Open With loop) | 13 | 100% |
+| **Total** | | **68** | **100%** |
 
 For detailed test architecture documentation, see [TEST_INFRA.md](TEST_INFRA.md).
 

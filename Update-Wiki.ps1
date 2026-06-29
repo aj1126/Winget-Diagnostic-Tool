@@ -43,7 +43,7 @@ if (Test-Path $quickStartPath) {
         $qsContent += @"
 
 ## 🧪 Automated Test Verification
-The tool is continuously verified against 66 isolated edge-case test runs in a virtual test harness to prevent regressions in registry, permissions, or process loop states.
+The tool is continuously verified against 68 isolated edge-case test runs in a virtual test harness to prevent regressions in registry, permissions, or process loop states.
 
 Below is a terminal recording screenshot of a successful E2E test suite execution:
 

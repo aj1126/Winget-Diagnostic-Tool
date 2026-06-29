@@ -64,7 +64,7 @@ To verify scripts safely without corrupting the host machine's environment, regi
 |                     tests/Run-Tests.ps1                     |
 |                                                             |
 |   1. Compiles mock winget binary                            |
-|   2. Iterates through 60 defined test cases                 |
+|   2. Iterates through 68 defined test cases                 |
 |   3. Prepares sandbox, setup.json, and run_test_case.ps1    |
 |   4. Spawns isolated PowerShell sub-process                 |
 |   5. Evaluates output state and asserts pass/fail status    |
@@ -81,6 +81,23 @@ To verify scripts safely without corrupting the host machine's environment, regi
 |   - Writes final_state.json on termination                  |
 +-------------------------------------------------------------+
 ```
+
+### Running and Filtering Tests
+
+To speed up test feedback during development, `Run-Tests.ps1` supports filtering parameters:
+
+- **Filter by ID**: Run specific test IDs (e.g., `-Id 1,2` or `-Id 68`).
+  ```powershell
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Run-Tests.ps1 -Id 67,68
+  ```
+- **Filter by Tier**: Run only a specific tier of tests (e.g., `-Tier "Tier 3"`).
+  ```powershell
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Run-Tests.ps1 -Tier "Tier 3"
+  ```
+- **Filter by Name**: Match test names via partial wildcard matching (e.g., `-Name "Ghost"`).
+  ```powershell
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Run-Tests.ps1 -Name "Ghost"
+  ```
 
 ### Sandbox & Mocks
 
@@ -106,6 +123,8 @@ The framework tests full-system diagnostic flows under Tier 4, simulating comple
 9. **Empty Backup Rollback Handling (Test 64)**: Verifies that an empty/malformed backup registry file is handled gracefully during rollback.
 10. **Instant Crash Recovery (Test 65)**: Verifies that if `winget.exe` exits instantly with code 1, the diagnostic check still passes or recovers gracefully without hang.
 11. **ProfileList Inaccessible Fallback (Test 66)**: Verifies that user profile resolution falls back to `env:USERPROFILE` if the HKLM `ProfileList` registry key is inaccessible.
+12. **Healthy System with wingetdev.exe Missing (Test 67)**: Verifies that diagnostics pass and no repairs are performed when `wingetdev.exe` is missing but `winget.exe` is healthy.
+13. **Shadowing File Remediation (Test 68)**: Verifies detection and removal of a shadowing `winget` executable located in the `PATH` before `WindowsApps`.
 
 ---
 
@@ -116,8 +135,8 @@ The framework tests full-system diagnostic flows under Tier 4, simulating comple
 | **Tier 1** | Feature Coverage | 25 | 100% |
 | **Tier 2** | Boundary & Corner Cases | 25 | 100% |
 | **Tier 3** | Cross-Feature Combinations | 5 | 100% |
-| **Tier 4** | Real-World Scenarios | 11 | 100% |
-| **Total** | **Full Suite** | **66** | **100%** |
+| **Tier 4** | Real-World Scenarios | 13 | 100% |
+| **Total** | **Full Suite** | **68** | **100%** |
 
 - **Strict Enforcement**: The test runner enforces a 100% pass rate. If any single test fails its assertion or throws an exception, `Run-Tests.ps1` returns exit code `1`.
 - **Pre-commit Verification**: All changes to `Repair-WingetAlias.ps1` or module code must be verified using the test runner prior to integration.

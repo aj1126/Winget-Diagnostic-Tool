@@ -8,7 +8,7 @@ The tool is a standalone PowerShell script (`Repair-WingetAlias.ps1`) designed t
 
 - `Repair-WingetAlias.ps1` - Main diagnostic and remediation script.
 - `tests/` - Folder containing the E2E test suite.
-- `tests/Run-Tests.ps1` - Test runner (60 test cases across 4 tiers).
+- `tests/Run-Tests.ps1` - Test runner (68 test cases across 4 tiers).
 - `TEST_INFRA.md` - Test architecture and coverage documentation.
 - `TEST_READY.md` - Test suite readiness status.
 
@@ -25,7 +25,7 @@ The tool is a standalone PowerShell script (`Repair-WingetAlias.ps1`) designed t
 | 7 | Victory Audit | Independent 3-phase audit (timeline, integrity, test execution). VICTORY CONFIRMED. | Milestone 6 | DONE |
 | 8 | Governance Rulesets | Establish branch protection rules, mandatory PR approvals, conversation resolution gates, and blocking CI pipelines. | Milestone 7 | DONE |
 | 9 | Milestone v1.1.0 | Deliver session isolation, ghost pointer loop diagnostics, native NTFS repairs, and 62/62 E2E test compliance. | Milestone 8 | DONE |
-| 10 | Milestone v2.0.0 | Convert monolithic script to a PowerShell module, decouple UI menu, CI/CD PSGallery automated publishing, Intune integration, MDT/SCCM exit codes, and 66/66 E2E tests. | Milestone 9 | DONE |
+| 10 | Milestone v2.0.0 | Convert monolithic script to a PowerShell module, decouple UI menu, CI/CD PSGallery automated publishing, Intune integration, MDT/SCCM exit codes, and 68/68 E2E tests. | Milestone 9 | DONE |
 
 ## Interface Contracts
 
@@ -47,5 +47,5 @@ The tool is a standalone PowerShell script (`Repair-WingetAlias.ps1`) designed t
 ### Test Suite Contract
 
 - Command: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Run-Tests.ps1`
-- Expected: exit code `0` when all 66 tests pass.
-- Coverage: Tier 1 (Feature, 25 tests), Tier 2 (Boundary, 25 tests), Tier 3 (Cross-Feature, 5 tests), Tier 4 (Real-World, 11 tests).
+- Expected: exit code `0` when all 68 tests pass.
+- Coverage: Tier 1 (Feature, 25 tests), Tier 2 (Boundary, 25 tests), Tier 3 (Cross-Feature, 5 tests), Tier 4 (Real-World, 13 tests).
