@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   validate:
     name: Validate and Analyze
@@ -26,7 +30,8 @@ jobs:
         uses: microsoft/psscriptanalyzer-action@v1.1
         with:
           path: .\
-          outputPath: results.sarif
+          recurse: true
+          output: results.sarif
 
       - name: Upload SARIF results file
         uses: github/codeql-action/upload-sarif@v3
