@@ -240,4 +240,5 @@ The script returns the following process exit codes:
 
 ## License
 
-This project is provided as-is for diagnostic and remediation purposes on Windows 11.
+This project is released into the public domain under The Unlicense.
+See the root [LICENSE](LICENSE) file for the full legal text.

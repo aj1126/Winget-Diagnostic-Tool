@@ -3,7 +3,7 @@
     GUID = 'd2e2faef-410d-4a11-828b-e85d414a7906'
     Author = 'Albert Edward Jukes III'
     CompanyName = 'aj1126'
-    Copyright = '(c) 2026. All rights reserved.'
+    Copyright = 'This is free and unencumbered software released into the public domain.'
     Description = 'A robust diagnostic and remediation engine designed to resolve winget execution loop issues.'
     PowerShellVersion = '5.1'
     RootModule = 'WingetDiagnosticTool.psm1'
