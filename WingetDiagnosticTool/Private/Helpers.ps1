@@ -1248,11 +1248,11 @@ function Repair-All {
     
     # 2. Alias Setting Repair
     Write-Log -Message "[Step 2/4] Verifying and re-enabling execution aliases in registry..." -Level "Info"
-    $aliasSuccess = Repair-AppExecutionAliases
+    Repair-AppExecutionAliases | Out-Null
 
     # 3. Clean corrupted alias stubs
     Write-Log -Message "[Step 3/4] Checking and removing corrupted execution alias stubs..." -Level "Info"
-    $stubSuccess = Repair-AliasStubs
+    Repair-AliasStubs | Out-Null
     
     # 4. Package repair / Re-registration
     Write-Log -Message "[Step 4/4] Repairing AppX Package Registration..." -Level "Info"
@@ -1275,7 +1275,7 @@ function Repair-All {
     
     # 5. Clean shadowing files
     Write-Log -Message "[Step 5/5] Checking and removing shadowing winget files..." -Level "Info"
-    $shadowSuccess = Repair-ShadowingFiles
+    Repair-ShadowingFiles | Out-Null
     
     Write-Log -Message "Remediation actions finished. Testing Winget execution..." -Level "Info"
     

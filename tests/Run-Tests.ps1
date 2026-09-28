@@ -1447,7 +1447,7 @@ Add-Test -Id 68 -Tier "Tier 4" -Name "Shadowing file remediation" `
 
 Add-Test -Id 69 -Tier "Tier 4" -Name "Interactive menu option 4 decoupled repair" `
     -Description "Verify that menu option 4 triggers decoupled Repair-AppExecutionAlias and Repair-AliasStub." `
-    -Setup { @{ 
+    -Setup { @{
         MockInputs = @("4", "", "7")
         AliasSettings = @{
             "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 0 }
@@ -1457,7 +1457,8 @@ Add-Test -Id 69 -Tier "Tier 4" -Name "Interactive menu option 4 decoupled repair
         }
     } } `
     -Parameters @() `
-    -Assertion { param($state, $exitCode) 
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
         $state.CalledCmdlets -contains "Read-Host: 4" -and
         $state.CalledCmdlets -contains "Read-Host: 7" -and
         $state.AliasSettings["Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe"].State -eq 1 -and
@@ -1466,11 +1467,11 @@ Add-Test -Id 69 -Tier "Tier 4" -Name "Interactive menu option 4 decoupled repair
 
 Add-Test -Id 70 -Tier "Tier 4" -Name "Interactive menu quit shortcut" `
     -Description "Verify that entering Q at the menu prompt exits cleanly without error." `
-    -Setup { @{ 
+    -Setup { @{
         MockInputs = @("Q")
     } } `
     -Parameters @() `
-    -Assertion { param($state, $exitCode) 
+    -Assertion { param($state, $exitCode)
         $state.CalledCmdlets -contains "Read-Host: Q" -and
         $exitCode -eq 0
     }
