@@ -1,7 +1,25 @@
 function Invoke-WingetDiagnosticMenu {
+    <#
+    .SYNOPSIS
+        Launches the interactive repair wizard for winget diagnostics and remediation.
+    .DESCRIPTION
+        Presents an interactive menu to allow administrators to run diagnostics, apply path repairs,
+        re-register AppX packages, enable execution aliases, clean shadowing binaries, or restore backups.
+        Includes non-interactive safety guards to prevent automated execution hangs.
+    #>
     [Diagnostics.CodeAnalysis.SuppressMessage("PSAvoidUsingWriteHost", "")]
     [CmdletBinding()]
     param()
+
+    # Non-interactive console guard (Rule 14 & Rule 201)
+    $canPrompt = $IsInteractive
+    if ($null -eq $canPrompt) {
+        $canPrompt = [Environment]::UserInteractive -and ($Host.Name -notmatch "Background|Job|NonInteractive") -and ($null -ne $Host.UI) -and -not $env:NON_INTERACTIVE
+    }
+    if (-not $canPrompt -and -not $env:IsTestRunner) {
+        Write-Log -Message "Invoke-WingetDiagnosticMenu cannot run in a non-interactive session. Use Repair-WingetAlias -Force or discrete repair functions." -Level "Warn"
+        return
+    }
 
     $title = @"
 ==================================================
@@ -30,7 +48,20 @@ function Invoke-WingetDiagnosticMenu {
 
         $choice = Read-HostSafe "Select an option [1-7]"
 
-        switch ($choice) {
+        if ([string]::IsNullOrWhiteSpace($choice)) {
+            if (-not $canPrompt -or $env:NON_INTERACTIVE) {
+                Write-Log -Message "Invoke-WingetDiagnosticMenu exiting: empty input received in non-interactive environment." -Level "Warn"
+                return
+            }
+            continue
+        }
+
+        if ($choice.Trim().ToUpper() -in @('Q', 'QUIT', 'EXIT')) {
+            Write-Host "Exiting wizard. Goodbye!" -ForegroundColor Cyan
+            return
+        }
+
+        switch ($choice.Trim()) {
             "1" {
                 Clear-Host
                 Run-Diagnostics | Out-Null
@@ -54,22 +85,8 @@ function Invoke-WingetDiagnosticMenu {
             }
             "4" {
                 Clear-Host
-                $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
-                $aliases = Get-DeclaredExecutionAliases -pkg $pkg
-                $aliasKeys = foreach ($alias in $aliases) {
-                    "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\$alias"
-                }
-                foreach ($aliasKey in $aliasKeys) {
-                    $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
-                    if (Test-UserRegistryKey -SubKeyPath $subKey) {
-                        if (Should-Process -Target "Registry Key HKCU:\$subKey" -Action "Set State = 1 (Enable alias)") {
-                            Set-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -Value 1 -ValueKind DWord
-                            Write-Log -Message "Enabled alias setting $aliasKey." -Level "Success"
-                        }
-                    } else {
-                        Write-Log -Message "Alias Setting [$aliasKey]: Key not present (Default Enabled)." -Level "Info"
-                    }
-                }
+                Repair-AppExecutionAliases | Out-Null
+                Repair-AliasStubs | Out-Null
                 Read-HostSafe "`nPress Enter to return to menu"
             }
             "5" {

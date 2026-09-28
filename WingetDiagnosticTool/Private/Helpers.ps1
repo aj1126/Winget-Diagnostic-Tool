@@ -1246,56 +1246,13 @@ function Repair-All {
         }
     }
     
-    $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
-    $aliases = Get-DeclaredExecutionAliases -pkg $pkg
-    $regAliasSettings = foreach ($alias in $aliases) {
-        "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\$alias"
-    }
-
     # 2. Alias Setting Repair
     Write-Log -Message "[Step 2/4] Verifying and re-enabling execution aliases in registry..." -Level "Info"
-    foreach ($aliasKey in $regAliasSettings) {
-        $subKey = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\$aliasKey"
-        if (Test-UserRegistryKey -SubKeyPath $subKey) {
-            $state = Get-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -DefaultValue $null
-            $isStateEnabled = $false
-            if ($null -ne $state) {
-                $stateInt = 0
-                if ([int]::TryParse($state, [ref]$stateInt)) {
-                    if ($stateInt -ne 0) {
-                        $isStateEnabled = $true
-                    }
-                }
-            }
-            if (-not $isStateEnabled) {
-                if (Should-Process -Target "Registry Key HKCU:\$subKey" -Action "Set State = 1 (Enable alias)") {
-                    Set-UserRegistryValue -SubKeyPath $subKey -ValueName "State" -Value 1 -ValueKind DWord
-                    Write-Log -Message "Re-enabled alias settings for $aliasKey." -Level "Success"
-                }
-            }
-        }
-    }
-    
+    $aliasSuccess = Repair-AppExecutionAliases
+
     # 3. Clean corrupted alias stubs
     Write-Log -Message "[Step 3/4] Checking and removing corrupted execution alias stubs..." -Level "Info"
-    foreach ($alias in $aliases) {
-        $aliasPath = Join-Path $dirPath $alias
-        $exists = [System.IO.File]::Exists($aliasPath)
-        if ($exists) {
-            $isReparse = $false
-            try {
-                $attrs = [System.IO.File]::GetAttributes($aliasPath)
-                $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
-            } catch {
-                Write-Log -Message "Failed to retrieve attributes for ${aliasPath}: $_" -Level "Warn"
-            }
-            
-            if (-not $isReparse) {
-                Write-Log -Message "Corrupted stub file found at $aliasPath (Not a reparse point). Removing..." -Level "Warn"
-                Remove-ReparsePoint -Path $aliasPath
-            }
-        }
-    }
+    $stubSuccess = Repair-AliasStubs
     
     # 4. Package repair / Re-registration
     Write-Log -Message "[Step 4/4] Repairing AppX Package Registration..." -Level "Info"
