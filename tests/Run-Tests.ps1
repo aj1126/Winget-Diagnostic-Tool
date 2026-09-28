@@ -739,7 +739,7 @@ function global:Read-Host {
         $global:CalledCmdlets.Add("Read-Host: $choice")
         return $choice
     }
-    return "6"
+    return "7"
 }
 function global:Read-HostSafe {
     param($Prompt)
@@ -1445,8 +1445,36 @@ Add-Test -Id 68 -Tier "Tier 4" -Name "Shadowing file remediation" `
         $deleted -and $exitCode -eq 0
     }
 
+Add-Test -Id 69 -Tier "Tier 4" -Name "Interactive menu option 4 decoupled repair" `
+    -Description "Verify that menu option 4 triggers decoupled Repair-AppExecutionAlias and Repair-AliasStub." `
+    -Setup { @{
+        MockInputs = @("4", "", "7")
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 0 }
+        }
+        Files = @{
+            "wingetdev.exe" = @{ IsReparsePoint = $false }
+        }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        $state.CalledCmdlets -contains "Read-Host: 4" -and
+        $state.CalledCmdlets -contains "Read-Host: 7" -and
+        $state.AliasSettings["Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe"].State -eq 1 -and
+        -not $state.Files.ContainsKey("wingetdev.exe")
+    }
 
-
+Add-Test -Id 70 -Tier "Tier 4" -Name "Interactive menu quit shortcut" `
+    -Description "Verify that entering Q at the menu prompt exits cleanly without error." `
+    -Setup { @{
+        MockInputs = @("Q")
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $state.CalledCmdlets -contains "Read-Host: Q" -and
+        $exitCode -eq 0
+    }
 
 # 4. Execution loop
 if ($PSBoundParameters.ContainsKey('Id')) {

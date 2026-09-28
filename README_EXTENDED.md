@@ -4,7 +4,7 @@
 
 A production-grade, single-profile PowerShell utility designed to diagnose and repair Windows Package Manager (`winget`) execution loops, corrupted reparse points, and registry PATH inconsistencies on Windows 11.
 
-> **Status**: ✅ Complete — 60/60 E2E tests passing, forensic audit clean, independently verified.
+> **Status**: ✅ Complete — 70/70 E2E tests passing, forensic audit clean, independently verified.
 
 ---
 
@@ -92,6 +92,38 @@ If the `Microsoft.DesktopAppInstaller` AppX package is completely missing, the s
 Restore the previous PATH from the backup registry key or `.reg` file:
 ```powershell
 .\Repair-WingetAlias.ps1 -Rollback
+```
+
+#### Decoupled Module Cmdlets (Programmatic & Automation API)
+
+When importing the `WingetDiagnosticTool` module directly into your PowerShell session or CI/CD pipelines, all core remediation and inspection functions are completely decoupled and available as standalone cmdlets:
+
+```powershell
+Import-Module .\WingetDiagnosticTool\WingetDiagnosticTool.psd1
+
+# Run diagnostic inspection only
+Run-Diagnostics
+
+# Repair user environment PATH and WindowsApps entry
+Repair-EnvironmentPath
+
+# Re-enable DesktopAppInstaller AppExecutionAliases in registry
+Repair-AppExecutionAlias # (or Repair-AppExecutionAliases)
+
+# Purge corrupted non-reparse point alias stubs
+Repair-AliasStub # (or Repair-AliasStubs)
+
+# Re-register and reset AppX package
+Repair-AppXInstallerPackage
+
+# Purge shadowing executables in System32 / prior PATH directories
+Repair-ShadowingFiles
+
+# Revert previous changes from backup
+Restore-EnvironmentBackup
+
+# Launch the interactive menu wizard (with non-interactive safety guards)
+Invoke-WingetDiagnosticMenu
 ```
 
 ---
