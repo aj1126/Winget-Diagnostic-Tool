@@ -305,6 +305,7 @@ $global:CalledCmdlets = New-Object System.Collections.Generic.List[string]
 $global:SimulateOpenWithLoop = $setup.OpenWithLoop
 $global:MockDownloadFail = $setup.DownloadFail
 $global:MockInputs = New-Object System.Collections.Generic.List[string]
+$global:MockActiveSetup = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
 
 # Initialize AliasSettings
 if ($setup.AliasSettings) {
@@ -440,7 +441,41 @@ function global:Set-ItemProperty {
         $global:MockAliasRegistry[$subPath][$Name] = $Value
         return
     }
+    if ($Path -like "*Active Setup*") {
+        $global:MockActiveSetup[$Name] = $Value
+        return
+    }
     return Microsoft.PowerShell.Management\Set-ItemProperty -Path $Path -Name $Name -Value $Value -Force -ErrorAction SilentlyContinue
+}
+
+function global:New-Item {
+    param(
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [string]$Path,
+        [string]$ItemType,
+        $Value,
+        [switch]$Force
+    )
+    $global:CalledCmdlets.Add("New-Item: $Path - $ItemType")
+    if ($Path -like "*Active Setup*") {
+        return [PSCustomObject]@{ Path = $Path }
+    }
+    return Microsoft.PowerShell.Management\New-Item @PSBoundParameters -ErrorAction SilentlyContinue
+}
+
+function global:Remove-Item {
+    param(
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [string]$Path,
+        [switch]$Recurse,
+        [switch]$Force
+    )
+    $global:CalledCmdlets.Add("Remove-Item: $Path")
+    if ($Path -like "*Active Setup*") {
+        $global:MockActiveSetup.Clear()
+        return
+    }
+    return Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters -ErrorAction SilentlyContinue
 }
 
 function global:Test-Path {
@@ -454,6 +489,9 @@ function global:Test-Path {
         if ($subPath.StartsWith("HKCU:\")) { $subPath = $subPath.Substring(6) }
         if ($subPath.StartsWith("HKCU:")) { $subPath = $subPath.Substring(5) }
         return $global:MockAliasRegistry.ContainsKey($subPath)
+    }
+    if ($Path -like "*Active Setup*") {
+        return $global:MockActiveSetup.Count -gt 0
     }
     return Microsoft.PowerShell.Management\Test-Path -Path $Path -ErrorAction SilentlyContinue
 }
@@ -779,6 +817,7 @@ try {
         }
         AliasSettings = @{}
         Files = @{}
+        ActiveSetup = $global:MockActiveSetup
         Output = $scriptOutput
         CalledCmdlets = $global:CalledCmdlets
     }
@@ -1608,6 +1647,30 @@ Add-Test -Id 75 -Tier "Tier 4" -Name "Intune Remediation on missing WindowsApps 
         ($state.Output -join " ") -match "Success"
     }
 
+Add-Test -Id 76 -Tier "Tier 4" -Name "Install-ActiveSetupStage on elevated session" `
+    -Description "Verify that Install-ActiveSetupStage.ps1 stages files, registers HKLM Active Setup, and exits with code 0." `
+    -Setup { @{
+        TargetScript = ".\sccm\Install-ActiveSetupStage.ps1"
+        MockIsAdmin = "true"
+    } } `
+    -Parameters @("-StagingPath", "StagedTool") `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        $state.ActiveSetup["ComponentID"] -eq "WingetDiagnosticTool" -and
+        $state.ActiveSetup["StubPath"] -like "*Repair-WingetAlias.ps1*"
+    }
+
+Add-Test -Id 77 -Tier "Tier 4" -Name "Install-ActiveSetupStage on non-elevated session" `
+    -Description "Verify that Install-ActiveSetupStage.ps1 detects lack of admin privileges and exits with code 1." `
+    -Setup { @{
+        TargetScript = ".\sccm\Install-ActiveSetupStage.ps1"
+        MockIsAdmin = "false"
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 1 -and ($null -ne $state)
+    }
+
 # 4. Execution loop
 if ($PSBoundParameters.ContainsKey('Id')) {
     $TestCases = @($TestCases | Where-Object { $_.Id -in $Id })
@@ -1642,6 +1705,10 @@ foreach ($tc in $TestCases) {
     $intuneDir = Join-Path $ProjectRoot "intune"
     if (Test-Path $intuneDir) {
         Copy-Item -Path $intuneDir -Destination $testDir -Recurse -Force
+    }
+    $sccmDir = Join-Path $ProjectRoot "sccm"
+    if (Test-Path $sccmDir) {
+        Copy-Item -Path $sccmDir -Destination $testDir -Recurse -Force
     }
     $winAppsDir = New-Item -ItemType Directory -Path (Join-Path $testDir "LocalAppData\Microsoft\WindowsApps") -Force
     Copy-Item -Path $wingetExePath -Destination (Join-Path $winAppsDir "winget.exe") -Force

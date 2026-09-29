@@ -73,3 +73,10 @@ Both scripts emit standardized exit codes and formatted `STDOUT` telemetry captu
 - **SYSTEM Context Guard**: Both scripts actively detect if accidentally run as `NT AUTHORITY\SYSTEM` and immediately emit a helpful configuration error rather than falsely modifying system hives.
 - **Non-Blocking 3-Second Probe**: Prevents the infamous "Open With" GUI dialog loop from hanging the Intune Management Extension process.
 - **Non-Destructive Repairs**: Low-level .NET deletions target only non-reparse point corrupted stub files, safely leaving valid NTFS junction points intact.
+
+---
+
+## 🏢 On-Premises & Hybrid Deployment (SCCM / MECM / MDT)
+
+For on-premises OSD imaging, Active Setup multi-user staging, or Configuration Manager Task Sequences, see the [Microsoft SCCM / MECM & MDT Task Sequence Deployment Guide](../sccm/README.md).
+

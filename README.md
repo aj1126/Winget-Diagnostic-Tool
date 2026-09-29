@@ -1,6 +1,6 @@
 # Winget Diagnostic & Remediation Tool
 
-[Quick Start](#-quick-start-copy--paste) | [Safety Standards](#️-non-destructive-architecture--safety-standards) | [Microsoft Intune Guide](intune/README.md) | [Extended Docs](README_EXTENDED.md) | [Testing Suite](TEST_INFRA.md) | [Use Cases & Causes](docs/USE_CASES_AND_CAUSES.md)
+[Quick Start](#-quick-start-copy--paste) | [Safety Standards](#️-non-destructive-architecture--safety-standards) | [Microsoft Intune Guide](intune/README.md) | [SCCM & MDT Guide](sccm/README.md) | [Extended Docs](README_EXTENDED.md) | [Testing Suite](TEST_INFRA.md) | [Use Cases & Causes](docs/USE_CASES_AND_CAUSES.md)
 
 [![Lint State](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/lint.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
 [![Production Release Pipeline](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/release.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
@@ -41,6 +41,12 @@ For native Intune deployment with single-file IME isolation and zero external de
 * **Remediation Script**: [`intune/Remediation.ps1`](intune/Remediation.ps1) (Exits `0` for Success, `1` for Error)
 * See [`intune/README.md`](intune/README.md) for the complete Intune deployment runbook.
 
+#### Microsoft SCCM / MECM & MDT Task Sequences
+
+For OSD imaging pipelines, Active Setup staging, or Configuration Baselines, consult the dedicated deployment runbook in the [`sccm/`](sccm/) directory:
+* **Active Setup Staging**: [`sccm/Install-ActiveSetupStage.ps1`](sccm/Install-ActiveSetupStage.ps1) (Stages tool and registers HKLM Active Setup for multi-user OSD)
+* See [`sccm/README.md`](sccm/README.md) for the complete Task Sequence configuration guide, variable handling (`_SMSTSLastActionSucceeded`), and exit-code mapping.
+
 #### Standardized Exit Codes (MDT/SCCM/Intune)
 
 The script and module return deterministic exit codes to simplify enterprise orchestration:
@@ -73,4 +79,4 @@ If you are looking for the original technical deep dives, architectural breakdow
 ## 🧪 Vetting Status
 
 * **PSScriptAnalyzer Lint Compliance:** 100% Pass (0 Errors, 0 Warnings)
-* **Integration Tests:** 75 / 75 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
+* **Integration Tests:** 77 / 77 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
