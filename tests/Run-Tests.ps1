@@ -1668,7 +1668,7 @@ Add-Test -Id 77 -Tier "Tier 4" -Name "Install-ActiveSetupStage on non-elevated s
     } } `
     -Parameters @() `
     -Assertion { param($state, $exitCode)
-        $exitCode -eq 1
+        $exitCode -eq 1 -and ($null -ne $state)
     }
 
 # 4. Execution loop
