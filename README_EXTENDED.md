@@ -4,7 +4,7 @@
 
 A production-grade, single-profile PowerShell utility designed to diagnose and repair Windows Package Manager (`winget`) execution loops, corrupted reparse points, and registry PATH inconsistencies on Windows 11.
 
-> **Status**: ✅ Complete — 70/70 E2E tests passing, forensic audit clean, independently verified.
+> **Status**: ✅ Complete — 75/75 E2E tests passing, forensic audit clean, independently verified.
 
 ---
 
@@ -53,6 +53,8 @@ Perform full diagnostic checks and apply all necessary repairs automatically:
 ```powershell
 .\Repair-WingetAlias.ps1 -Force
 ```
+
+> **Microsoft Intune Integration**: For native Intune Proactive Remediations without external dependencies, deploy the standalone [`intune/Detection.ps1`](intune/Detection.ps1) and [`intune/Remediation.ps1`](intune/Remediation.ps1) scripts. See the [Microsoft Intune Runbook](intune/README.md) for full configuration details.
 
 #### Safe Dry-Run (What-If / Dry-Run Mode)
 
