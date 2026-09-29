@@ -1,3 +1,4 @@
+using namespace Microsoft.Win32
 # WingetDiagnosticTool.psm1
 # Root module file that dynamically loads public and private functions.
 

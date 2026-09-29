@@ -1,3 +1,4 @@
+using namespace Microsoft.Win32
 function Repair-WingetAlias {
     [Diagnostics.CodeAnalysis.SuppressMessage("PSShouldProcess", "")]
     [Diagnostics.CodeAnalysis.SuppressMessage("PSUseOutputTypeCorrectly", "")]

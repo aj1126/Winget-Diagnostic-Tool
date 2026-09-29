@@ -1,3 +1,4 @@
+using namespace Microsoft.Win32
 # Safe wrapper around $PSCmdlet.ShouldProcess that handles non-advanced/null contexts gracefully
 function Should-Process {
     [Diagnostics.CodeAnalysis.SuppressMessage("PSUseApprovedVerbs", "")]
@@ -57,9 +58,9 @@ function Get-TargetUserAndSid {
     $currentIdentity = $script:WindowsIdentityClass::GetCurrent()
     $targetUsername = $env:USERNAME
     $targetSid = $currentIdentity.User.Value
-    
+
     $isAdmin = $currentIdentity.Claims | Where-Object { $_.Value -eq "S-1-5-32-544" }
-    
+
     if ($isAdmin) {
         try {
             $currentSessionId = (Get-Process -Id $PID).SessionId
@@ -85,7 +86,7 @@ function Get-TargetUserAndSid {
         } catch {
             Write-Log -Message "Failed to resolve explorer.exe owner: $_" -Level "Warn"
         }
-        
+
         if ($targetUsername -eq $env:USERNAME -and $currentIdentity.Name -match "Administrator") {
             try {
                 $compSystem = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
@@ -103,13 +104,13 @@ function Get-TargetUserAndSid {
             }
         }
     }
-    
+
     $script:TargetUserAndSidCache = [pscustomobject]@{
         Username = $targetUsername
         Sid      = $targetSid
         IsAdmin  = [bool]$isAdmin
     }
-    
+
     return $script:TargetUserAndSidCache
 }
 
@@ -119,7 +120,7 @@ function Expand-TargetUserPath {
         [string]$Path
     )
     if ([string]::IsNullOrEmpty($Path)) { return "" }
-    
+
     $target = Get-TargetUserAndSid
     $profilePath = ""
     if ($target.IsAdmin) {
@@ -136,12 +137,12 @@ function Expand-TargetUserPath {
     if ([string]::IsNullOrEmpty($profilePath)) {
         $profilePath = $env:USERPROFILE
     }
-    
+
     $expanded = $Path -ireplace '%USERPROFILE%', $profilePath
     $expanded = $expanded -ireplace '%LOCALAPPDATA%', "$profilePath\AppData\Local"
     $expanded = $expanded -ireplace '%APPDATA%', "$profilePath\AppData\Roaming"
     $expanded = [System.Environment]::ExpandEnvironmentVariables($expanded)
-    
+
     return $expanded
 }
 
@@ -151,7 +152,7 @@ function Get-TargetUserLocalFolder {
         [string]$SubFolder = "AppData\Local"
     )
     $target = Get-TargetUserAndSid
-    
+
     if ($target.IsAdmin) {
         try {
             $profileKey = $script:RegistryClass::LocalMachine.OpenSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($target.Sid)")
@@ -170,7 +171,7 @@ function Get-TargetUserLocalFolder {
             Write-Log -Message "Failed to resolve ProfileImagePath from ProfileList: $_" -Level "Warn"
         }
     }
-    
+
     if ($SubFolder -eq "AppData\Local") {
         return $env:LOCALAPPDATA
     }
@@ -183,7 +184,7 @@ function Get-UserRegistryKey {
         [string]$SubKeyPath,
         [bool]$Writable = $false
     )
-    
+
     $target = Get-TargetUserAndSid
     if ($target.IsAdmin) {
         try {
@@ -193,7 +194,7 @@ function Get-UserRegistryKey {
             Write-Log -Message "Failed to open target user registry key '$SubKeyPath': $_" -Level "Warn"
         }
     }
-    
+
     try {
         return $script:RegistryClass::CurrentUser.OpenSubKey($SubKeyPath, $Writable)
     } catch {
@@ -207,7 +208,7 @@ function Get-OrCreateUserRegistryKey {
         [string]$SubKeyPath,
         [bool]$Writable = $true
     )
-    
+
     $target = Get-TargetUserAndSid
     if ($target.IsAdmin) {
         try {
@@ -220,7 +221,7 @@ function Get-OrCreateUserRegistryKey {
             Write-Log -Message "Failed to open or create target user registry key '$SubKeyPath': $_" -Level "Warn"
         }
     }
-    
+
     try {
         $key = $script:RegistryClass::CurrentUser.OpenSubKey($SubKeyPath, $Writable)
         if (-not $key) {
@@ -293,12 +294,12 @@ function Update-SessionPath {
             $machinePath = $machineKey.GetValue("PATH", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
             $machineKey.Close()
         }
-        
+
         $userPath = Get-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -DefaultValue ""
-        
+
         $expandedMachine = [System.Environment]::ExpandEnvironmentVariables($machinePath)
         $expandedUser = Expand-TargetUserPath -Path $userPath
-        
+
         $parts = @()
         if (-not [string]::IsNullOrEmpty($expandedMachine)) {
             $parts += $expandedMachine -split ";"
@@ -306,14 +307,14 @@ function Update-SessionPath {
         if (-not [string]::IsNullOrEmpty($expandedUser)) {
             $parts += $expandedUser -split ";"
         }
-        
+
         $filteredParts = @()
         foreach ($part in $parts) {
             if (-not [string]::IsNullOrWhiteSpace($part)) {
                 $filteredParts += $part.Trim()
             }
         }
-        
+
         $env:Path = $filteredParts -join ";"
         Write-Log -Message "Refreshed current session PATH from registry (merged Machine and User paths)." -Level "Success"
     } catch {
@@ -361,7 +362,7 @@ function Get-DeclaredExecutionAliases {
                 $alias
             }
         }
-        
+
         $wingetAliases = $manifestAliases | Where-Object { $_ -like "winget*" }
         if ($null -ne $wingetAliases -and @($wingetAliases).Count -ge 1) {
             return @($wingetAliases)
@@ -429,12 +430,12 @@ function Save-EnvironmentBackup {
                     return $false
                 }
             }
-            
+
             # 2. Disk redundant backup file (.reg)
             $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
             $regFileName = "Repair-WingetAlias_Backup_$timestamp.reg"
             $regFilePath = Join-Path $script:DiagnosticDataDir $regFileName
-            
+
             if (Should-Process -Target "File $regFilePath" -Action "Export environment backup as .reg file") {
                 $escapedPath = $currentRawPath.Replace('\', '\\').Replace('"', '\"')
                 $target = Get-TargetUserAndSid
@@ -478,7 +479,7 @@ function Get-PathFromRegFile {
 function Restore-EnvironmentBackup {
     try {
         $backupPath = Get-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH_PreRepairBackup" -DefaultValue ""
-        
+
         if ([string]::IsNullOrEmpty($backupPath)) {
             Write-Log -Message "No path backup key found in registry. Searching for backup .reg files..." -Level "Warn"
             if (Test-Path $script:DiagnosticDataDir) {
@@ -486,7 +487,7 @@ function Restore-EnvironmentBackup {
                 if ($backupFiles) {
                     $latestFile = $backupFiles[0]
                     Write-Log -Message "Found backup file: $($latestFile.Name) (Last Modified: $($latestFile.LastWriteTime))" -Level "Info"
-                    
+
                     if (Should-Process -Target "Registry Import" -Action "Restore registry from backup file $($latestFile.FullName)") {
                         $restoredPath = Get-PathFromRegFile -FilePath $latestFile.FullName
                         if (-not [string]::IsNullOrEmpty($restoredPath)) {
@@ -512,7 +513,7 @@ function Restore-EnvironmentBackup {
             Write-Log -Message "Found registry backup value: $backupPath" -Level "Info"
             if (Should-Process -Target "Registry Key HKCU:\Environment" -Action "Restore PATH from 'PATH_PreRepairBackup'") {
                 Set-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -Value $backupPath -ValueKind ExpandString
-                
+
                 $environmentKey = Get-UserRegistryKey -SubKeyPath "Environment" -Writable $true
                 if ($environmentKey) {
                     try {
@@ -522,7 +523,7 @@ function Restore-EnvironmentBackup {
                     }
                     $environmentKey.Close()
                 }
-                
+
                 Write-Log -Message "Successfully restored registry PATH value." -Level "Success"
                 Update-SessionPath
                 Broadcast-EnvironmentUpdate
@@ -553,26 +554,26 @@ function Repair-EnvironmentPath {
             Write-Log -Message "Security Check: Target user lacks write permissions to User Environment registry! Profile registry may be corrupted." -Level "Error"
             return $false
         }
-        
+
         $currentRawPath = Get-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -DefaultValue ""
         $windowsAppsVar = "%LOCALAPPDATA%\Microsoft\WindowsApps"
-        
+
         $paths = @()
         if (-not [string]::IsNullOrEmpty($currentRawPath)) {
             $paths = $currentRawPath -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
         }
-        
+
         $appsPathFound = $false
         $cleanedPaths = [System.Collections.Generic.List[string]]::new()
-        
+
         foreach ($p in $paths) {
             $normalizedP = Get-NormalizedPath -Path $p
             $normalizedApps = Get-NormalizedPath -Path $windowsAppsVar
-            
+
             if ($normalizedP -ieq $normalizedApps) {
                 $appsPathFound = $true
             }
-            
+
             # Remove duplicate path entries
             $isDuplicate = $false
             foreach ($cp in $cleanedPaths) {
@@ -581,14 +582,14 @@ function Repair-EnvironmentPath {
                     break
                 }
             }
-            
+
             if (-not $isDuplicate) {
                 $cleanedPaths.Add($p)
             } else {
                 Write-Log -Message "Cleaned up duplicate path entry in registry: $p" -Level "Warn"
             }
         }
-        
+
         if ($appsPathFound) {
             Write-Log -Message "WindowsApps path is already present in User PATH registry." -Level "Success"
             if ($cleanedPaths.Count -eq $paths.Length) {
@@ -598,16 +599,16 @@ function Repair-EnvironmentPath {
             Write-Log -Message "WindowsApps path ($windowsAppsVar) is MISSING from User PATH registry." -Level "Warn"
             $cleanedPaths.Add($windowsAppsVar)
         }
-        
+
         $newRawPath = ($cleanedPaths -join ";").Trim(';')
         Write-Log -Message "Proposed User PATH: $newRawPath" -Level "Info"
-        
+
         # Save backup before writing changes
         if (-not (Save-EnvironmentBackup)) {
             Write-Log -Message "Failed to backup path registry key. Aborting repair for safety." -Level "Error"
             return $false
         }
-        
+
         # Apply repair
         if (Should-Process -Target "Registry Key HKCU:\Environment" -Action "Update PATH value to: $newRawPath") {
             Set-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -Value $newRawPath -ValueKind ExpandString
@@ -631,89 +632,93 @@ function Test-OpenWithLoop {
         Write-Log -Message "winget.exe alias does not exist at $wingetPath. GHOST POINTER detected!" -Level "Error"
         return "GHOST_POINTER"
     }
-    
+
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $wingetPath
     $psi.Arguments = "--version"
     $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
+    $psi.RedirectStandardOutput = $false
+    $psi.RedirectStandardError = $false
     $psi.CreateNoWindow = $true
-    
+
     $proc = New-Object System.Diagnostics.Process
     $proc.StartInfo = $psi
-    
+
     try {
-        $started = $proc.Start()
-        if (-not $started) {
-            Write-Log -Message "Failed to initialize winget.exe process." -Level "Error"
+        try {
+            $started = $proc.Start()
+            if (-not $started) {
+                Write-Log -Message "Failed to initialize winget.exe process." -Level "Error"
+                return $true
+            }
+        } catch {
+            Write-Log -Message "Error spawning winget.exe process: $_" -Level "Error"
             return $true
         }
-    } catch {
-        Write-Log -Message "Error spawning winget.exe process: $_" -Level "Error"
-        return $true
-    }
-    
-    $timeoutMs = 3000
-    $intervalMs = 250
-    $elapsed = 0
-    $loopDetected = $false
-    
-    while ($elapsed -lt $timeoutMs) {
-        if ($proc.HasExited) {
-            break
+
+        $timeoutMs = 3000
+        $intervalMs = 250
+        $elapsed = 0
+        $loopDetected = $false
+
+        while ($elapsed -lt $timeoutMs) {
+            if ($proc.HasExited) {
+                break
+            }
+
+            $openWithProcs = Get-Process -Name "OpenWith" -ErrorAction SilentlyContinue
+            if ($openWithProcs) {
+                Write-Log -Message "Open With GUI dialog process detected! Execution loop confirmed." -Level "Error"
+                $loopDetected = $true
+                $openWithProcs | Stop-Process -Force -ErrorAction SilentlyContinue
+                break
+            }
+
+            Start-Sleep -Milliseconds $intervalMs
+            $elapsed += $intervalMs
         }
-        
-        $openWithProcs = Get-Process -Name "OpenWith" -ErrorAction SilentlyContinue
-        if ($openWithProcs) {
-            Write-Log -Message "Open With GUI dialog process detected! Execution loop confirmed." -Level "Error"
+
+        if (-not $proc.HasExited) {
+            Write-Log -Message "winget.exe execution hung (timed out after 3 seconds)." -Level "Error"
             $loopDetected = $true
-            $openWithProcs | Stop-Process -Force -ErrorAction SilentlyContinue
-            break
+            try {
+                $proc.Kill()
+            } catch {
+                Write-Log -Message "Failed to terminate hung winget.exe process: $_" -Level "Warn"
+            }
         }
-        
-        Start-Sleep -Milliseconds $intervalMs
-        $elapsed += $intervalMs
+
+        return $loopDetected
+    } finally {
+        $proc.Dispose()
     }
-    
-    if (-not $proc.HasExited) {
-        Write-Log -Message "winget.exe execution hung (timed out after 3 seconds)." -Level "Error"
-        $loopDetected = $true
-        try {
-            $proc.Kill()
-        } catch {
-            Write-Log -Message "Failed to terminate hung winget.exe process: $_" -Level "Warn"
-        }
-    }
-    
-    return $loopDetected
 }
 
 # Repair AppX Installer Package Registration
 function Repair-AppXInstallerPackage {
     Write-Log -Message "Running AppX package re-registration for Microsoft.DesktopAppInstaller..." -Level "Info"
-    
+
     if ($PSVersionTable.PSVersion.Major -ge 7) {
         Import-Module -Name Appx -ErrorAction SilentlyContinue
     }
-    
+
     $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
     if (-not $pkg) {
         Write-Log -Message "Microsoft.DesktopAppInstaller is not registered for the target user!" -Level "Error"
         return $false
     }
-    
+
     if ([string]::IsNullOrEmpty($pkg.InstallLocation)) {
         Write-Log -Message "Microsoft.DesktopAppInstaller installation directory path is null or empty! Package registration might be severely corrupted." -Level "Error"
         return $false
     }
-    
+
     $manifestPath = Join-Path $pkg.InstallLocation "AppxManifest.xml"
     if (-not [System.IO.File]::Exists($manifestPath)) {
         Write-Log -Message "Package manifest not found at: $manifestPath" -Level "Error"
         return $false
     }
-    
+
     if (Should-Process -Target "AppX Package $($pkg.PackageFullName)" -Action "Re-register AppX package") {
         try {
             Add-AppxPackage -DisableDevelopmentMode -Register $manifestPath -ForceApplicationShutdown -ErrorAction Stop
@@ -723,7 +728,7 @@ function Repair-AppXInstallerPackage {
             return $false
         }
     }
-    
+
     if (Get-Command "Reset-AppxPackage" -ErrorAction SilentlyContinue) {
         if (Should-Process -Target "AppX Package $($pkg.PackageFullName)" -Action "Reset AppX package data") {
             try {
@@ -734,7 +739,7 @@ function Repair-AppXInstallerPackage {
             }
         }
     }
-    
+
     return $true
 }
 
@@ -829,7 +834,7 @@ function Install-WingetFallback {
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     }
     $destFile = Join-Path $tempDir "Microsoft.DesktopAppInstaller.msixbundle"
-    
+
     if (Should-Process -Target "Internet Download" -Action "Download from $downloadUrl to $destFile") {
         try {
             $securityProtocols = [System.Net.SecurityProtocolType]::Tls12
@@ -846,7 +851,7 @@ function Install-WingetFallback {
                 $null = $_
             }
             [System.Net.ServicePointManager]::SecurityProtocol = $securityProtocols
-            
+
             Write-Log -Message "Downloading latest release package from GitHub..." -Level "Info"
             Invoke-WebRequest -Uri $downloadUrl -OutFile $destFile -UseBasicParsing -ErrorAction Stop
             Write-Log -Message "Download completed. Installing package..." -Level "Info"
@@ -867,7 +872,7 @@ function Install-UnattendedTask {
     $taskName = "Repair-WingetAlias"
     $target = Get-TargetUserAndSid
     $isAdmin = $target.IsAdmin
-    
+
     if ($isAdmin) {
         Write-Log -Message "Elevated session detected. Attempting to register Windows Scheduled Task..." -Level "Info"
         if (Should-Process -Target "Task Scheduler" -Action "Register Scheduled Task '$taskName' to run at user logon") {
@@ -877,7 +882,7 @@ function Install-UnattendedTask {
                 $principal = New-ScheduledTaskPrincipal -UserId $target.Username -LogonType Interactive
                 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
                 $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
-                
+
                 Register-ScheduledTask -TaskName $taskName -InputObject $task -Force | Out-Null
                 Write-Log -Message "Successfully registered Windows Scheduled Task '$taskName' for user '$($target.Username)'." -Level "Success"
             } catch {
@@ -886,7 +891,7 @@ function Install-UnattendedTask {
             }
         }
     }
-    
+
     if (-not $isAdmin) {
         Write-Log -Message "Creating startup execution path for non-elevated deployment..." -Level "Info"
         $startupFolder = Get-UserRegistryValue -SubKeyPath "Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" -ValueName "Startup" -DefaultValue ""
@@ -899,7 +904,7 @@ function Install-UnattendedTask {
             $startupFolder = Join-Path $env:USERPROFILE "AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
         }
         $shortcutPath = Join-Path $startupFolder "$taskName.lnk"
-        
+
         $shortcutCreated = $false
         if (Should-Process -Target "Startup Shortcut $shortcutPath" -Action "Create shortcut to execute script on logon") {
             try {
@@ -915,7 +920,7 @@ function Install-UnattendedTask {
             } catch {
                 Write-Log -Message "Failed to create startup shortcut: $_. Falling back to Registry Run key..." -Level "Warn"
             }
-            
+
             if (-not $shortcutCreated) {
                 try {
                     $runKeyPath = "Software\Microsoft\Windows\CurrentVersion\Run"
@@ -938,13 +943,13 @@ function Run-Diagnostics {
     Write-Log -Message "==================================================" -Level "Info"
     Write-Log -Message "          WINGET ALIAS DIAGNOSTICS REPORT         " -Level "Info"
     Write-Log -Message "==================================================" -Level "Info"
-    
+
     # 1. Path checks
     $pathState = "FAIL"
     $currentRawPath = Get-UserRegistryValue -SubKeyPath "Environment" -ValueName "PATH" -DefaultValue ""
     $windowsAppsVar = "%LOCALAPPDATA%\Microsoft\WindowsApps"
     $foundInRegistry = $false
-    
+
     if (-not [string]::IsNullOrEmpty($currentRawPath)) {
         $paths = $currentRawPath -split ";"
         foreach ($p in $paths) {
@@ -956,14 +961,14 @@ function Run-Diagnostics {
             }
         }
     }
-    
+
     if ($foundInRegistry) {
         $pathState = "PASS"
         Write-Log -Message "PATH Check: $windowsAppsVar is present in registry." -Level "Success"
     } else {
         Write-Log -Message "PATH Check: $windowsAppsVar is MISSING from registry!" -Level "Error"
     }
-    
+
     $foundInProcess = $false
     $procPaths = $env:Path -split ";"
     foreach ($p in $procPaths) {
@@ -972,13 +977,13 @@ function Run-Diagnostics {
             break
         }
     }
-    
+
     if ($foundInProcess) {
         Write-Log -Message "Process PATH Check: WindowsApps directory is present in current environment." -Level "Success"
     } else {
         Write-Log -Message "Process PATH Check: WindowsApps directory is MISSING from current environment!" -Level "Warn"
     }
-    
+
     # 2. Directory check
     $targetLocalAppData = Get-TargetUserLocalFolder "AppData\Local"
     $dirPath = "$targetLocalAppData\Microsoft\WindowsApps"
@@ -987,7 +992,7 @@ function Run-Diagnostics {
     } else {
         Write-Log -Message "Directory Check: WindowsApps folder DOES NOT EXIST!" -Level "Error"
     }
-    
+
     # 3. AppX Package check
     $pkgState = "FAIL"
     if ($PSVersionTable.PSVersion.Major -ge 7) {
@@ -999,7 +1004,7 @@ function Run-Diagnostics {
         Write-Log -Message "AppX Package Check: Microsoft.DesktopAppInstaller is installed." -Level "Success"
         Write-Log -Message "  - Version: $($pkg.Version)" -Level "Info"
         Write-Log -Message "  - Status: $($pkg.Status)" -Level "Info"
-        
+
         if (-not [string]::IsNullOrEmpty($pkg.InstallLocation) -and (Test-Path $pkg.InstallLocation)) {
             Write-Log -Message "AppX Installation Directory Check: Folder exists at $($pkg.InstallLocation)." -Level "Success"
         } else {
@@ -1029,7 +1034,7 @@ function Run-Diagnostics {
             Write-Log -Message "Dependency Check: Microsoft.UI.Xaml is completely MISSING! DesktopAppInstaller will fail to launch." -Level "Error"
         }
     }
-    
+
     # 4. Alias files check
     $aliasState = "PASS"
     $aliases = Get-DeclaredExecutionAliases -pkg $pkg
@@ -1046,7 +1051,7 @@ function Run-Diagnostics {
             } catch {
                 Write-Log -Message "Failed to retrieve attributes for ${aliasPath}: $_" -Level "Warn"
             }
-            
+
             if ($isReparse) {
                 Write-Log -Message "Alias File Check [$alias]: File exists and is a valid Reparse Point." -Level "Success"
             } else {
@@ -1062,7 +1067,7 @@ function Run-Diagnostics {
             }
         }
     }
-    
+
     # 5. Registry toggles check
     $settingsState = "PASS"
     $regAliasSettings = foreach ($alias in $aliases) {
@@ -1091,18 +1096,18 @@ function Run-Diagnostics {
             Write-Log -Message "Alias Setting [$aliasKey]: Key not present (Default Enabled)." -Level "Success"
         }
     }
-    
+
     # 6. OpenWith loop check
     $loopResult = Test-OpenWithLoop
     $loopDetected = ($loopResult -eq $true -or $loopResult -eq "GHOST_POINTER")
-    
+
     # 7. Shadowing files check
     $shadowState = "PASS"
     $script:ShadowingFiles = @()
     $targetLocalAppData = Get-TargetUserLocalFolder "AppData\Local"
     $expandedTarget = Get-NormalizedPath -Path "$targetLocalAppData\Microsoft\WindowsApps"
     $windowsAppsVar = "%LOCALAPPDATA%\Microsoft\WindowsApps"
-    
+
     $procPaths = $env:Path -split ";"
     $targetIndex = -1
     $normalizedPaths = @()
@@ -1117,7 +1122,7 @@ function Run-Diagnostics {
             }
         }
     }
-    
+
     $checkDirs = @()
     if ($targetIndex -ge 0) {
         for ($i = 0; $i -lt $targetIndex; $i++) {
@@ -1126,7 +1131,7 @@ function Run-Diagnostics {
     } else {
         $checkDirs = $normalizedPaths
     }
-    
+
     $shadowNames = @("winget", "winget.exe", "winget.cmd", "winget.bat")
     foreach ($dir in $checkDirs) {
         if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path $dir)) { continue }
@@ -1141,7 +1146,7 @@ function Run-Diagnostics {
             }
         }
     }
-    
+
     if ($script:ShadowingFiles.Count -gt 0) {
         Write-Log -Message "Shadowing Check: Found $($script:ShadowingFiles.Count) shadowing winget file(s) that block the official alias:" -Level "Error"
         foreach ($sf in $script:ShadowingFiles) {
@@ -1150,7 +1155,7 @@ function Run-Diagnostics {
     } else {
         Write-Log -Message "Shadowing Check: No shadowing winget files found in PATH." -Level "Success"
     }
-    
+
     Write-Log -Message "==================================================" -Level "Info"
     Write-Log -Message "                  SUMMARY STATUS                  " -Level "Info"
     Write-Log -Message "  - Environment PATH:  $pathState" -Level "Info"
@@ -1160,7 +1165,7 @@ function Run-Diagnostics {
     Write-Log -Message "  - Loop Detected:     $(if ($loopResult -eq $true) { 'YES (FAIL)' } elseif ($loopResult -eq 'GHOST_POINTER') { 'GHOST POINTER (FAIL)' } else { 'NO (PASS)' })" -Level "Info"
     Write-Log -Message "  - Shadowing Files:   $shadowState" -Level "Info"
     Write-Log -Message "==================================================" -Level "Info"
-    
+
     $needsRepair = ($pathState -eq "FAIL" -or $pkgState -eq "FAIL" -or $aliasState -eq "FAIL" -or $settingsState -eq "FAIL" -or $loopDetected -or $shadowState -eq "FAIL")
     return $needsRepair
 }
@@ -1176,7 +1181,7 @@ function Repair-ShadowingFiles {
         $targetLocalAppData = Get-TargetUserLocalFolder "AppData\Local"
         $expandedTarget = Get-NormalizedPath -Path "$targetLocalAppData\Microsoft\WindowsApps"
         $windowsAppsVar = "%LOCALAPPDATA%\Microsoft\WindowsApps"
-        
+
         $procPaths = $env:Path -split ";"
         $targetIndex = -1
         $normalizedPaths = @()
@@ -1191,7 +1196,7 @@ function Repair-ShadowingFiles {
                 }
             }
         }
-        
+
         $checkDirs = @()
         if ($targetIndex -ge 0) {
             for ($i = 0; $i -lt $targetIndex; $i++) {
@@ -1200,7 +1205,7 @@ function Repair-ShadowingFiles {
         } else {
             $checkDirs = $normalizedPaths
         }
-        
+
         $shadowNames = @("winget", "winget.exe", "winget.cmd", "winget.bat")
         foreach ($dir in $checkDirs) {
             if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path $dir)) { continue }
@@ -1215,7 +1220,7 @@ function Repair-ShadowingFiles {
             }
         }
     }
-    
+
     $success = $true
     if ($shadowFiles.Count -gt 0) {
         foreach ($sf in $shadowFiles) {
@@ -1239,7 +1244,7 @@ function Repair-ShadowingFiles {
 # Run full automatic repair routine
 function Repair-All {
     Write-Log -Message "Starting automated repair routine..." -Level "Info"
-    
+
     # 1. Path Repair
     Write-Log -Message "[Step 1/4] Repairing User environment PATH..." -Level "Info"
     $pathSuccess = Repair-EnvironmentPath
@@ -1248,7 +1253,7 @@ function Repair-All {
     } else {
         Write-Log -Message "PATH repair failed." -Level "Error"
     }
-    
+
     # Ensure WindowsApps folder exists
     $targetLocalAppData = Get-TargetUserLocalFolder "AppData\Local"
     $dirPath = "$targetLocalAppData\Microsoft\WindowsApps"
@@ -1258,7 +1263,7 @@ function Repair-All {
             Write-Log -Message "Created folder at $dirPath." -Level "Success"
         }
     }
-    
+
     # 2. Alias Setting Repair
     Write-Log -Message "[Step 2/4] Verifying and re-enabling execution aliases in registry..." -Level "Info"
     Repair-AppExecutionAliases | Out-Null
@@ -1266,7 +1271,7 @@ function Repair-All {
     # 3. Clean corrupted alias stubs
     Write-Log -Message "[Step 3/4] Checking and removing corrupted execution alias stubs..." -Level "Info"
     Repair-AliasStubs | Out-Null
-    
+
     # 4. Package repair / Re-registration
     Write-Log -Message "[Step 4/4] Repairing AppX Package Registration..." -Level "Info"
     $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
@@ -1285,13 +1290,13 @@ function Repair-All {
             Write-Log -Message "AppX package registration repair failed." -Level "Error"
         }
     }
-    
+
     # 5. Clean shadowing files
     Write-Log -Message "[Step 5/5] Checking and removing shadowing winget files..." -Level "Info"
     Repair-ShadowingFiles | Out-Null
-    
+
     Write-Log -Message "Remediation actions finished. Testing Winget execution..." -Level "Info"
-    
+
     # Verify execution
     $loopDetected = Test-OpenWithLoop
     if ($loopDetected) {
