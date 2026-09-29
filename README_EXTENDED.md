@@ -4,7 +4,7 @@
 
 A production-grade, single-profile PowerShell utility designed to diagnose and repair Windows Package Manager (`winget`) execution loops, corrupted reparse points, and registry PATH inconsistencies on Windows 11.
 
-> **Status**: ✅ Complete — 75/75 E2E tests passing, forensic audit clean, independently verified.
+> **Status**: ✅ Complete — 77/77 E2E tests passing, forensic audit clean, independently verified.
 
 ---
 
@@ -55,6 +55,8 @@ Perform full diagnostic checks and apply all necessary repairs automatically:
 ```
 
 > **Microsoft Intune Integration**: For native Intune Proactive Remediations without external dependencies, deploy the standalone [`intune/Detection.ps1`](intune/Detection.ps1) and [`intune/Remediation.ps1`](intune/Remediation.ps1) scripts. See the [Microsoft Intune Runbook](intune/README.md) for full configuration details.
+>
+> **Microsoft SCCM / MECM & MDT Integration**: For task sequence OSD imaging, Active Setup staging across multi-user endpoints, and Configuration Baselines, see the [Microsoft SCCM & MDT Deployment Guide](sccm/README.md).
 
 #### Safe Dry-Run (What-If / Dry-Run Mode)
 
@@ -142,23 +144,23 @@ graph TD
     InitLog --> PermCheck{Write Permissions?}
     PermCheck -->|No| ErrExit[Log Error & Exit 1]
     PermCheck -->|Yes| ModeSelect{Check Parameters}
-    
+
     ModeSelect -->|AsJob| SpawnJob[Spawn Background PS Job]
     ModeSelect -->|Rollback| RollbackMode[Restore PATH from Backup]
     ModeSelect -->|ScheduleTask| SetupTask[Install Task / Startup Shortcut]
     ModeSelect -->|Force / Menu| RunDiag[Execute Diagnostic Checks]
-    
+
     RunDiag --> CheckPath[1. Validate PATH Key HKCU]
     RunDiag --> CheckAppX[2. Verify Microsoft.DesktopAppInstaller Package]
     RunDiag --> CheckDeps[3. Audit UWP Dependencies]
     RunDiag --> CheckAlias[4. Validate Alias Reparse Points]
     RunDiag --> CheckToggle[5. Check Registry State Toggles]
     RunDiag --> CheckLoop[6. Active Loop execution check]
-    
+
     CheckLoop --> DiagSummary{Needs Repair?}
     DiagSummary -->|No| SuccessExit[Log Pass & Exit 0]
     DiagSummary -->|Yes| RepairMode[Run Remediation Routine]
-    
+
     RepairMode --> RepPath[Repair Registry PATH]
     RepPath --> RepToggle[Enable Alias Registry States]
     RepToggle --> CleanStubs[Delete Corrupt Alias File Stubs]
