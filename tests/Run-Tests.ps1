@@ -753,10 +753,18 @@ $global:RegisterScheduledTaskFail = $setup.RegisterScheduledTaskFail
 
 # Execute script and collect final state
 $childExitCode = 0
+$scriptOutput = $null
 try {
+    $targetScript = if ($setup.TargetScript) { $setup.TargetScript } else { ".\Repair-WingetAlias.ps1" }
     $params = $args
-    $childExitCode = . .\Repair-WingetAlias.ps1 @params
-    if ($null -eq $childExitCode) { $childExitCode = 0 }
+    $scriptOutput = . $targetScript @params
+    if ($scriptOutput -is [int]) {
+        $childExitCode = $scriptOutput
+    } elseif ($scriptOutput -is [array] -and $scriptOutput.Count -gt 0 -and $scriptOutput[-1] -is [int]) {
+        $childExitCode = $scriptOutput[-1]
+    } elseif ($null -eq $childExitCode) {
+        $childExitCode = 0
+    }
 } catch {
     $global:CalledCmdlets.Add("Exception: $_")
     $childExitCode = 1
@@ -771,6 +779,7 @@ try {
         }
         AliasSettings = @{}
         Files = @{}
+        Output = $scriptOutput
         CalledCmdlets = $global:CalledCmdlets
     }
     
@@ -1476,6 +1485,129 @@ Add-Test -Id 70 -Tier "Tier 4" -Name "Interactive menu quit shortcut" `
         $exitCode -eq 0
     }
 
+Add-Test -Id 71 -Tier "Tier 4" -Name "Intune Detection on healthy system" `
+    -Description "Verify that Detection.ps1 outputs Compliant and exits with code 0 on healthy endpoint." `
+    -Setup { @{
+        TargetScript = ".\intune\Detection.ps1"
+        Registry = @{
+            PATH = "%LOCALAPPDATA%\Microsoft\WindowsApps"
+        }
+        AppxPackages = @(
+            @{
+                Name = "Microsoft.DesktopAppInstaller"
+                PackageFullName = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe_x64__8wekyb3d8bbwe"
+                InstallLocation = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+                Version = "1.22.11261.0"
+                Status = "Ok"
+            }
+        )
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 }
+        }
+        Files = @{
+            "winget.exe" = @{ IsReparsePoint = $true }
+        }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        ($state.Output -join " ") -match "Compliant"
+    }
+
+Add-Test -Id 72 -Tier "Tier 4" -Name "Intune Detection on disabled alias" `
+    -Description "Verify that Detection.ps1 outputs Non-compliant and exits with code 1 when alias State = 0." `
+    -Setup { @{
+        TargetScript = ".\intune\Detection.ps1"
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 0 }
+        }
+        Files = @{
+            "winget.exe" = @{ IsReparsePoint = $true }
+        }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 1 -and
+        ($state.Output -join " ") -match "Non-compliant"
+    }
+
+Add-Test -Id 73 -Tier "Tier 4" -Name "Intune Detection on corrupted plain file stub" `
+    -Description "Verify that Detection.ps1 outputs Non-compliant and exits with code 1 when stub is not a reparse point." `
+    -Setup { @{
+        TargetScript = ".\intune\Detection.ps1"
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 }
+        }
+        Files = @{
+            "winget.exe" = @{ IsReparsePoint = $false }
+        }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 1 -and
+        ($state.Output -join " ") -match "Non-compliant"
+    }
+
+Add-Test -Id 74 -Tier "Tier 4" -Name "Intune Remediation on degraded alias and corrupted stub" `
+    -Description "Verify that Remediation.ps1 repairs alias registry state to 1, cleans corrupted stub, and exits 0." `
+    -Setup { @{
+        TargetScript = ".\intune\Remediation.ps1"
+        Registry = @{
+            PATH = "%LOCALAPPDATA%\Microsoft\WindowsApps"
+        }
+        AppxPackages = @(
+            @{
+                Name = "Microsoft.DesktopAppInstaller"
+                PackageFullName = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe_x64__8wekyb3d8bbwe"
+                InstallLocation = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+                Version = "1.22.11261.0"
+                Status = "Ok"
+            }
+        )
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 0 }
+        }
+        Files = @{
+            "winget.exe" = @{ IsReparsePoint = $false }
+        }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        $state.AliasSettings["Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe"].State -eq 1 -and
+        ($state.Output -join " ") -match "Success"
+    }
+
+Add-Test -Id 75 -Tier "Tier 4" -Name "Intune Remediation on missing WindowsApps in User PATH" `
+    -Description "Verify that Remediation.ps1 appends WindowsApps directory to User PATH and exits 0." `
+    -Setup { @{
+        TargetScript = ".\intune\Remediation.ps1"
+        Registry = @{
+            PATH = "C:\Windows;C:\Windows\System32"
+        }
+        AppxPackages = @(
+            @{
+                Name = "Microsoft.DesktopAppInstaller"
+                PackageFullName = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe_x64__8wekyb3d8bbwe"
+                InstallLocation = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+                Version = "1.22.11261.0"
+                Status = "Ok"
+            }
+        )
+        AliasSettings = @{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 }
+        }
+        Files = @{
+            "winget.exe" = @{ IsReparsePoint = $true }
+        }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        $state.Registry.PATH -like "*WindowsApps*" -and
+        ($state.Output -join " ") -match "Success"
+    }
+
 # 4. Execution loop
 if ($PSBoundParameters.ContainsKey('Id')) {
     $TestCases = @($TestCases | Where-Object { $_.Id -in $Id })
@@ -1507,6 +1639,10 @@ foreach ($tc in $TestCases) {
     # Copy script and mock winget
     Copy-Item -Path $ScriptToTest -Destination $testDir -Force
     Copy-Item -Path (Join-Path $ProjectRoot "WingetDiagnosticTool") -Destination $testDir -Recurse -Force
+    $intuneDir = Join-Path $ProjectRoot "intune"
+    if (Test-Path $intuneDir) {
+        Copy-Item -Path $intuneDir -Destination $testDir -Recurse -Force
+    }
     $winAppsDir = New-Item -ItemType Directory -Path (Join-Path $testDir "LocalAppData\Microsoft\WindowsApps") -Force
     Copy-Item -Path $wingetExePath -Destination (Join-Path $winAppsDir "winget.exe") -Force
     Copy-Item -Path $wingetExePath -Destination (Join-Path $winAppsDir "wingetdev.exe") -Force

@@ -22,9 +22,17 @@ if ((Get-Variable -Name "IsTestRunner" -Scope "global" -ErrorAction SilentlyCont
 
 $script:RegistryClass = [Microsoft.Win32.Registry]
 $script:WindowsIdentityClass = [System.Security.Principal.WindowsIdentity]
+$script:FileClass = [System.IO.File]
 if ($isTest) {
-    $script:RegistryClass = [MockRegistry]
-    $script:WindowsIdentityClass = [MockWindowsIdentity]
+    if ('MockRegistry' -as [type]) {
+        $script:RegistryClass = 'MockRegistry' -as [type]
+    }
+    if ('MockWindowsIdentity' -as [type]) {
+        $script:WindowsIdentityClass = 'MockWindowsIdentity' -as [type]
+    }
+    if ('MockFile' -as [type]) {
+        $script:FileClass = 'MockFile' -as [type]
+    }
 }
 
 # Safe Read-Host that doesn't hang in non-interactive sessions
@@ -330,6 +338,7 @@ function Get-TargetAppxPackage {
 
 # Get the execution aliases declared in the DesktopAppInstaller manifest
 function Get-DeclaredExecutionAliases {
+    [Diagnostics.CodeAnalysis.SuppressMessage("PSUseSingularNouns", "")]
     param (
         [object]$pkg
     )
@@ -358,7 +367,7 @@ function Get-DeclaredExecutionAliases {
             return @($wingetAliases)
         }
     } catch {
-        # Fallback
+        $null = $_
     }
     return $defaultAliases
 }
@@ -750,7 +759,7 @@ function Remove-ReparsePoint {
 
             $isReparse = $false
             try {
-                $attrs = [System.IO.File]::GetAttributes($Path)
+                $attrs = $script:FileClass::GetAttributes($Path)
                 $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
             } catch {
                 $null = $_
@@ -1031,7 +1040,7 @@ function Run-Diagnostics {
             $isReparse = $false
             $size = 0
             try {
-                $attrs = [System.IO.File]::GetAttributes($aliasPath)
+                $attrs = $script:FileClass::GetAttributes($aliasPath)
                 $isReparse = $attrs.HasFlag([System.IO.FileAttributes]::ReparsePoint)
                 $size = [System.IO.FileInfo]::new($aliasPath).Length
             } catch {
@@ -1100,6 +1109,7 @@ function Run-Diagnostics {
     for ($i = 0; $i -lt $procPaths.Count; $i++) {
         if ([string]::IsNullOrWhiteSpace($procPaths[$i])) { continue }
         $norm = Get-NormalizedPath -Path $procPaths[$i]
+        if ([string]::IsNullOrWhiteSpace($norm)) { continue }
         $normalizedPaths += $norm
         if ($norm -ieq $expandedTarget -or $norm -ieq (Get-NormalizedPath -Path $windowsAppsVar)) {
             if ($targetIndex -eq -1) {
@@ -1119,7 +1129,7 @@ function Run-Diagnostics {
     
     $shadowNames = @("winget", "winget.exe", "winget.cmd", "winget.bat")
     foreach ($dir in $checkDirs) {
-        if (-not (Test-Path $dir)) { continue }
+        if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path $dir)) { continue }
         foreach ($name in $shadowNames) {
             $filePath = Join-Path $dir $name
             if ([System.IO.File]::Exists($filePath)) {
@@ -1157,6 +1167,8 @@ function Run-Diagnostics {
 
 # Check and remove shadowing winget files from PATH
 function Repair-ShadowingFiles {
+    [Diagnostics.CodeAnalysis.SuppressMessage("PSUseSingularNouns", "")]
+    param()
     Write-Log -Message "Checking and removing shadowing winget files..." -Level "Info"
     $shadowFiles = $script:ShadowingFiles
     if ($null -eq $shadowFiles -or $shadowFiles.Count -eq 0) {
@@ -1171,6 +1183,7 @@ function Repair-ShadowingFiles {
         for ($i = 0; $i -lt $procPaths.Count; $i++) {
             if ([string]::IsNullOrWhiteSpace($procPaths[$i])) { continue }
             $norm = Get-NormalizedPath -Path $procPaths[$i]
+            if ([string]::IsNullOrWhiteSpace($norm)) { continue }
             $normalizedPaths += $norm
             if ($norm -ieq $expandedTarget -or $norm -ieq (Get-NormalizedPath -Path $windowsAppsVar)) {
                 if ($targetIndex -eq -1) {
@@ -1190,7 +1203,7 @@ function Repair-ShadowingFiles {
         
         $shadowNames = @("winget", "winget.exe", "winget.cmd", "winget.bat")
         foreach ($dir in $checkDirs) {
-            if (-not (Test-Path $dir)) { continue }
+            if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path $dir)) { continue }
             foreach ($name in $shadowNames) {
                 $filePath = Join-Path $dir $name
                 if ([System.IO.File]::Exists($filePath)) {

@@ -1,6 +1,6 @@
 # Winget Diagnostic & Remediation Tool
 
-[Quick Start](#-quick-start-copy--paste) | [Safety Standards](#️-non-destructive-architecture--safety-standards) | [Extended Docs](README_EXTENDED.md) | [Testing Suite](TEST_INFRA.md) | [Use Cases & Causes](docs/USE_CASES_AND_CAUSES.md)
+[Quick Start](#-quick-start-copy--paste) | [Safety Standards](#️-non-destructive-architecture--safety-standards) | [Microsoft Intune Guide](intune/README.md) | [Extended Docs](README_EXTENDED.md) | [Testing Suite](TEST_INFRA.md) | [Use Cases & Causes](docs/USE_CASES_AND_CAUSES.md)
 
 [![Lint State](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/lint.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
 [![Production Release Pipeline](https://github.com/aj1126/winget-diagnostic-tool/actions/workflows/release.yml/badge.svg)](https://github.com/aj1126/winget-diagnostic-tool/actions)
@@ -34,6 +34,13 @@ For headless deployment image scrubbing or silent profile repairs, append the `-
 .\Repair-WingetAlias.ps1 -Force
 ```
 
+#### Microsoft Intune Proactive Remediations
+
+For native Intune deployment with single-file IME isolation and zero external dependencies, upload the standalone scripts located in the [`intune/`](intune/) directory:
+* **Detection Script**: [`intune/Detection.ps1`](intune/Detection.ps1) (Exits `0` for Compliant, `1` for Non-compliant)
+* **Remediation Script**: [`intune/Remediation.ps1`](intune/Remediation.ps1) (Exits `0` for Success, `1` for Error)
+* See [`intune/README.md`](intune/README.md) for the complete Intune deployment runbook.
+
 #### Standardized Exit Codes (MDT/SCCM/Intune)
 
 The script and module return deterministic exit codes to simplify enterprise orchestration:
@@ -66,4 +73,4 @@ If you are looking for the original technical deep dives, architectural breakdow
 ## 🧪 Vetting Status
 
 * **PSScriptAnalyzer Lint Compliance:** 100% Pass (0 Errors, 0 Warnings)
-* **Integration Tests:** 70 / 70 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
+* **Integration Tests:** 75 / 75 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
