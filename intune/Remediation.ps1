@@ -36,7 +36,7 @@ $success = $true
 if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
     # Tier 1: Execute remediation using modular public cmdlets
     Write-Output "Initiating WingetDiagnosticTool module remediation..."
-    
+
     # Step A: Environment PATH
     try {
         $pRes = Repair-EnvironmentPath
