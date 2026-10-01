@@ -62,9 +62,9 @@ $script:SidCurrent = [System.Security.Principal.WindowsIdentity]::GetCurrent().U
 $script:AclExtensions = 'System.IO.FileSystemAclExtensions' -as [type]
 
 function Get-LocalMachineKey {
-    # HKLM root in the 64-bit view; the test runner substitutes its in-memory MockRegistry so tests never
-    # touch the real registry.
-    $mockRegistry = 'MockRegistry' -as [type]
+    # HKLM root in the 64-bit view. Under the test runner (IsTestRunner set) its in-memory MockRegistry is used so
+    # tests never touch the real registry; outside it, a type that happens to be named MockRegistry is ignored.
+    $mockRegistry = if ($env:IsTestRunner -eq "true") { 'MockRegistry' -as [type] } else { $null }
     if ($mockRegistry) {
         return $mockRegistry::LocalMachine
     }
