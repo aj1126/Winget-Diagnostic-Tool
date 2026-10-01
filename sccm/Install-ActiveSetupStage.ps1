@@ -48,14 +48,15 @@ function Test-IsElevated {
 $script:SidSystem = 'S-1-5-18'
 $script:SidAdministrators = 'S-1-5-32-544'
 $script:SidUsers = 'S-1-5-32-545'
-$script:NonAdminSids = @('S-1-5-32-545', 'S-1-5-11', 'S-1-1-0', 'S-1-3-0', 'S-1-5-4')
+# The account running this script (SYSTEM in a task sequence). It owns what it creates.
+$script:SidCurrent = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+# PowerShell 7 reaches the ACL APIs through FileSystemAclExtensions; Windows PowerShell 5.1 has them on the types.
+$script:AclExtensions = 'System.IO.FileSystemAclExtensions' -as [type]
 
-function Set-StagingAcl {
-    # Replaces the staging folder's DACL with a protected one: SYSTEM and Administrators Full,
-    # Users ReadAndExecute, inheritance from ProgramData disabled. Inheritable entries propagate
-    # to every staged file and folder.
-    [CmdletBinding(SupportsShouldProcess = $true)]
-    param([Parameter(Mandatory = $true)][string]$Path)
+function Get-StagingSecurity {
+    # A protected DACL: SYSTEM and Administrators Full, Users ReadAndExecute, nothing inherited from
+    # ProgramData. -BuildSid also gets Full; it is used only while files are copied in.
+    param([string]$BuildSid)
 
     $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
     $propagation = [System.Security.AccessControl.PropagationFlags]::None
@@ -67,43 +68,95 @@ function Set-StagingAcl {
         @($script:SidAdministrators, [System.Security.AccessControl.FileSystemRights]::FullControl),
         @($script:SidUsers, [System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
     )
+    if ($BuildSid) {
+        $grants += , @($BuildSid, [System.Security.AccessControl.FileSystemRights]::FullControl)
+    }
     foreach ($grant in $grants) {
         $sid = [System.Security.Principal.SecurityIdentifier]::new($grant[0])
         $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, $grant[1], $inherit, $propagation, $allow)
         $acl.AddAccessRule($rule)
     }
+    return , $acl
+}
+
+function New-StagingDirectory {
+    # Creates the folder with its DACL in the same call, so it is never writable by other users.
+    # If the path already exists this does nothing; Assert-StagingSecure catches that case.
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][System.Security.AccessControl.DirectorySecurity]$Security
+    )
+
+    if (-not $PSCmdlet.ShouldProcess($Path, "Create locked staging directory")) { return }
+    if ($script:AclExtensions) {
+        [void]$script:AclExtensions::Create([System.IO.DirectoryInfo]::new($Path), $Security)
+    } else {
+        [void][System.IO.Directory]::CreateDirectory($Path, $Security)
+    }
+}
+
+function Set-StagingAcl {
+    # Replaces the staging folder's DACL with the final protected one (no build entry). The
+    # inheritable entries propagate to every staged file and folder.
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $acl = Get-StagingSecurity
     if ($PSCmdlet.ShouldProcess($Path, "Set restricted staging ACL")) {
-        Set-Acl -LiteralPath $Path -AclObject $acl
+        $dir = [System.IO.DirectoryInfo]::new($Path)
+        if ($script:AclExtensions) {
+            $script:AclExtensions::SetAccessControl($dir, $acl)
+        } else {
+            $dir.SetAccessControl($acl)
+        }
     }
 }
 
 function Assert-StagingSecure {
-    # Fails closed if the staging folder is not protected, if any non-admin principal can write
-    # to any staged item, or if the folder holds a file that was not staged from the source.
+    # Fails closed unless: the staging folder is a real folder (not a link) with a protected ACL;
+    # every staged item is owned by SYSTEM, Administrators or the account running this script;
+    # only SYSTEM and Administrators (plus -BuildSid, while files are copied) can write to any
+    # item; and the folder holds only files staged from the source.
     param(
         [Parameter(Mandatory = $true)][string]$StagingPath,
-        [Parameter(Mandatory = $true)][string[]]$ExpectedRelativePaths
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ExpectedRelativePaths,
+        [string]$BuildSid
     )
 
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    $reparse = [System.IO.FileAttributes]::ReparsePoint
+    $trustedOwners = @($script:SidSystem, $script:SidAdministrators, $script:SidCurrent)
+    $writers = @($script:SidSystem, $script:SidAdministrators)
+    if ($BuildSid) { $writers += $BuildSid }
     $writeMask = [System.Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
-    $rootAcl = Get-Acl -LiteralPath $StagingPath
-    if (-not $rootAcl.AreAccessRulesProtected) {
-        throw "Staging folder ACL is not protected: $StagingPath"
-    }
 
-    $items = @(Get-Item -LiteralPath $StagingPath) + @(Get-ChildItem -LiteralPath $StagingPath -Recurse -Force)
+    if (([System.IO.DirectoryInfo]::new($StagingPath).Attributes -band $reparse) -ne 0) {
+        throw "Staging folder is a link, not a folder: $StagingPath"
+    }
+    $items = @(Get-Item -LiteralPath $StagingPath -Force) + @(Get-ChildItem -LiteralPath $StagingPath -Recurse -Force)
     foreach ($item in $items) {
-        $rules = (Get-Acl -LiteralPath $item.FullName).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
-        foreach ($rule in $rules) {
+        if (($item.Attributes -band $reparse) -ne 0) {
+            throw "Staged item is a link: $($item.FullName)"
+        }
+        $acl = Get-Acl -LiteralPath $item.FullName
+        $owner = $acl.GetOwner($sidType).Value
+        if ($trustedOwners -notcontains $owner) {
+            throw "Staged item is owned by an untrusted principal ($owner): $($item.FullName)"
+        }
+        foreach ($rule in $acl.GetAccessRules($true, $true, $sidType)) {
             if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
-            if ($script:NonAdminSids -notcontains $rule.IdentityReference.Value) { continue }
-            if (($rule.FileSystemRights -band $writeMask) -ne 0) {
-                throw "Non-admin principal $($rule.IdentityReference.Value) can write to staged item: $($item.FullName)"
+            if (($rule.FileSystemRights -band $writeMask) -eq 0) { continue }
+            if ($writers -notcontains $rule.IdentityReference.Value) {
+                throw "Principal $($rule.IdentityReference.Value) can write to staged item: $($item.FullName)"
             }
         }
     }
+    if (-not (Get-Acl -LiteralPath $StagingPath).AreAccessRulesProtected) {
+        throw "Staging folder ACL is not protected: $StagingPath"
+    }
 
-    $rootFull = (Get-Item -LiteralPath $StagingPath).FullName.TrimEnd('\')
+    $rootFull = (Get-Item -LiteralPath $StagingPath -Force).FullName.TrimEnd('\')
     $expected = @{}
     foreach ($rel in $ExpectedRelativePaths) { $expected[$rel.ToLowerInvariant()] = $true }
     foreach ($file in @(Get-ChildItem -LiteralPath $StagingPath -Recurse -File -Force)) {
@@ -162,16 +215,20 @@ try {
 
             # 2. Stage files into a fresh, locked-down target location.
             # Standard users can create folders under ProgramData and own what they create, so an
-            # existing staging folder is never reused: it is deleted and recreated, the files are
-            # copied, the ACL is locked, and the result is verified. Any failure stops with exit 1.
+            # existing staging folder is never reused: it is deleted, then recreated with a locked
+            # ACL in the same call, so no other user can write to it at any point. The new folder is
+            # verified before anything is copied into it (a folder another user recreated in the
+            # meantime fails that check), the build entry for this account is removed after the
+            # copy, and the result is verified again. Any failure stops with exit 1.
             $StagingPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($StagingPath)
             if ($PSCmdlet.ShouldProcess($StagingPath, "Stage Files With Restricted ACL")) {
                 if ([System.IO.Directory]::Exists($StagingPath)) {
                     [System.IO.Directory]::Delete($StagingPath, $true)
                     Write-Verbose "Removed existing staging directory: $StagingPath"
                 }
-                [System.IO.Directory]::CreateDirectory($StagingPath) | Out-Null
-                Write-Verbose "Created staging directory: $StagingPath"
+                New-StagingDirectory -Path $StagingPath -Security (Get-StagingSecurity -BuildSid $script:SidCurrent)
+                Assert-StagingSecure -StagingPath $StagingPath -ExpectedRelativePaths @() -BuildSid $script:SidCurrent
+                Write-Verbose "Created locked staging directory: $StagingPath"
 
                 $expectedFiles = @("Repair-WingetAlias.ps1")
                 Copy-Item -Path $sourceRepairScript -Destination $StagingPath -Force:$Force
