@@ -86,6 +86,9 @@ This pattern stages `WingetDiagnosticTool` into `%ProgramData%\WingetDiagnosticT
    - **Package**: Check and select `Winget Diagnostic Tool - Enterprise Deployment`.
    - **Run this step as the following account**: Leave default (`NT AUTHORITY\SYSTEM`).
    - **Success codes**: `0`
+   - **64-bit file system redirection**: no setting is needed. The step runs 32-bit PowerShell by default, and the script writes the Active Setup key through the 64-bit registry view, so the key never lands under `WOW6432Node` and `-Uninstall` finds it from either host.
+
+To remove the component, run the same command line with `-Uninstall`. Re-staging a newer build is safe: the Active Setup `Version` follows the module version (`2.1.1` becomes `2,1,1`), so users who ran an older build run the repair once more at their next logon.
 
 ---
 
@@ -195,6 +198,7 @@ When troubleshooting deployment steps, inspect the following diagnostic logs:
 
 * **Zero Elevation Bleed**: Remediation commands strictly resolve user-level reparse points and environment variables without modifying the administrative system profile.
 * **Non-Blocking 3,000 ms Probe**: Process watchdog prevents the notorious "Open With" interactive dialog loop from hanging the SCCM Task Sequence execution engine.
-* **PSScriptAnalyzer Certified**: All scripts pass strict static code analysis with 0 errors and 0 warnings.
+* **PSScriptAnalyzer Checked**: `Install-ActiveSetupStage.ps1`, `Repair-WingetAlias.ps1` and the two Intune scripts report 0 errors and 0 warnings; `Repair-WingetAlias.ps1` is checked on every pull request (`lint.yml`).
 * **Automatic Rollback Support**: Passing `-Rollback` instantly restores pre-repair environment PATH settings from backup keys.
-* **Locked Staging Folder**: `Install-ActiveSetupStage.ps1` deletes the staging folder on every run and recreates it with a protected ACL (SYSTEM and Administrators: Full; Users: Read & Execute; inheritance disabled) in the same step, so no other user can write to it at any point. It checks the folder before and after copying the files: it must be a real folder (not a link), every item must be owned by SYSTEM, Administrators or the installing account, only SYSTEM and Administrators may write to it, and it may hold only the staged files. Standard users can create files under `%ProgramData%`, and Active Setup runs the staged script in every user's logon, so a writable staging folder would let one user run code as every other user. If the existing folder can't be removed or a check fails, staging stops with exit code `1`.
+* **Locked Staging Folder**: `Install-ActiveSetupStage.ps1` deletes the staging folder on every run and recreates it with a protected ACL (SYSTEM and Administrators: Full; Users: Read & Execute; inheritance disabled) in the same step, so no other user can write to it at any point. It checks the folder before and after copying the files: it must be a real folder (not a link), every item must be owned by SYSTEM, Administrators or the installing account, only SYSTEM and Administrators may write to it, and it may hold only the staged files. Standard users can create files under `%ProgramData%`, and Active Setup runs the staged script in every user's logon, so a writable staging folder would let one user run code as every other user. If the existing folder can't be removed or a check fails, staging stops with exit code `1` and removes any existing Active Setup registration, so the next logon never runs an unverified folder.
+* **64-bit Registry View**: The Active Setup key is written to `HKLM\SOFTWARE\Microsoft\Active Setup\Installed Components\WingetDiagnosticTool` through the 64-bit registry view, whether the host PowerShell is 32-bit or 64-bit.

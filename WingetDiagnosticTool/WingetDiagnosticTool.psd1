@@ -1,5 +1,5 @@
 @{
-    ModuleVersion = '2.1.0'
+    ModuleVersion = '2.1.1'
     GUID = 'd2e2faef-410d-4a11-828b-e85d414a7906'
     Author = 'Albert Edward Jukes III'
     CompanyName = 'aj1126'

@@ -1,6 +1,8 @@
 # Run-Tests.ps1
 # E2E Test Suite for Repair-WingetAlias.ps1
-# Runs on both Windows PowerShell 5.1 and PowerShell Core 7+
+# Runs only under Windows PowerShell 5.1 (powershell.exe): the mocks compile a console exe with Add-Type,
+# which PowerShell 7 cannot build. Under PowerShell 7 the #requires line below stops the run with an error.
+#requires -PSEdition Desktop
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
@@ -26,8 +28,23 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "Script under test: $ScriptToTest" -ForegroundColor Gray
 Write-Host "Host PowerShell version: $($PSVersionTable.PSVersion)" -ForegroundColor Gray
 
+function ConvertTo-LongPath {
+    # Expands 8.3 short components (e.g. C:\Users\RUNNER~1 on GitHub-hosted runners) to their long names. The tests
+    # compare PATH entries built from the sandbox path, so a short sandbox path fails them.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $root = [System.IO.Path]::GetPathRoot($fullPath)
+    $longPath = $root
+    foreach ($part in $fullPath.Substring($root.Length).Split([char[]]@('\'), [System.StringSplitOptions]::RemoveEmptyEntries)) {
+        # -Filter goes to the Win32 file search, which matches a short name and returns the long one
+        $entry = Get-ChildItem -LiteralPath $longPath -Filter $part -Force -ErrorAction SilentlyContinue | Select-Object -First 1
+        $longPath = Join-Path $longPath $(if ($entry) { $entry.Name } else { $part })
+    }
+    return $longPath
+}
+
 # 1. Compile mock winget once to speed up tests
-$globalTemp = Join-Path $env:TEMP "WingetTestMocks"
+$globalTemp = Join-Path (ConvertTo-LongPath $env:TEMP) "WingetTestMocks"
 if (-not (Test-Path $globalTemp)) {
     New-Item -ItemType Directory -Path $globalTemp -Force | Out-Null
 }
@@ -155,6 +172,24 @@ public class MockRegistryKey {
         }
     }
 
+    public void DeleteSubKeyTree(string name, bool throwOnMissing) {
+        string[] parts = name.Split(new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+        MockRegistryKey parent = this;
+        for (int i = 0; i < parts.Length - 1; i++) {
+            if (!parent.SubKeys.ContainsKey(parts[i])) {
+                if (throwOnMissing) { throw new ArgumentException("Subkey not found"); }
+                return;
+            }
+            parent = parent.SubKeys[parts[i]];
+        }
+        string last = parts[parts.Length - 1];
+        if (parent.SubKeys.ContainsKey(last)) {
+            parent.SubKeys.Remove(last);
+        } else if (throwOnMissing) {
+            throw new ArgumentException("Subkey not found");
+        }
+    }
+
     public void Close() {
         // no-op
     }
@@ -263,7 +298,9 @@ public class MockFile {
 }
 "@
 
-$mockDllPath = Join-Path $globalTemp "MockClasses.dll"
+# The DLL name carries a hash of the mock source, so a changed mock is compiled instead of an old DLL being reused
+$mockSourceHash = -join ([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($csharpCode))[0..7] | ForEach-Object { $_.ToString("x2") })
+$mockDllPath = Join-Path $globalTemp "MockClasses-$mockSourceHash.dll"
 try {
     if (-not (Test-Path $mockDllPath)) {
         Add-Type -TypeDefinition $csharpCode -OutputType Library -OutputAssembly $mockDllPath -ErrorAction Stop
@@ -362,6 +399,15 @@ if ($setup.Registry.PATH) {
 }
 if ($setup.Registry.PATH_PreRepairBackup) {
     $envKey.SetValue("PATH_PreRepairBackup", $setup.Registry.PATH_PreRepairBackup)
+}
+
+# PreRegisteredActiveSetup: an Active Setup component already registered in the mock HKLM (64-bit view)
+$activeSetupSubKey = "SOFTWARE\Microsoft\Active Setup\Installed Components\WingetDiagnosticTool"
+if ($setup.PreRegisteredActiveSetup) {
+    $preKey = [MockRegistry]::LocalMachine.CreateSubKey($activeSetupSubKey)
+    foreach ($prop in $setup.PreRegisteredActiveSetup.PSObject.Properties) {
+        $preKey.SetValue($prop.Name, $prop.Value)
+    }
 }
 
 # Initialize MockFile configuration from setup
@@ -810,6 +856,16 @@ try {
     $WhatIfPreference = $false
     $targetSid = "S-1-5-21-Mock-Sid-12345"
     $usersKey = [MockRegistry]::Users.OpenSubKey("$targetSid\Environment")
+    $activeSetupKey = [MockRegistry]::LocalMachine.OpenSubKey($activeSetupSubKey)
+    $activeSetupValues = $global:MockActiveSetup
+    if ($activeSetupKey) {
+        # The key's default value has the empty name; report it as "(Default)", which JSON can carry
+        $activeSetupValues = @{}
+        foreach ($valueName in $activeSetupKey.Values.Keys) {
+            $reportedName = if ($valueName -eq "") { "(Default)" } else { $valueName }
+            $activeSetupValues[$reportedName] = $activeSetupKey.Values[$valueName]
+        }
+    }
     $finalState = @{
         Registry = @{
             PATH = if ($setup.MockIsAdmin -eq "true" -and $usersKey) { $usersKey.GetValue("PATH") } else { $envKey.GetValue("PATH") }
@@ -817,7 +873,8 @@ try {
         }
         AliasSettings = @{}
         Files = @{}
-        ActiveSetup = $global:MockActiveSetup
+        ActiveSetup = $activeSetupValues
+        ActiveSetupInLocalMachine = [bool]$activeSetupKey
         Output = $scriptOutput
         CalledCmdlets = $global:CalledCmdlets
     }
@@ -1136,7 +1193,11 @@ Add-Test -Id 37 -Tier "Tier 2" -Name "Stub deletion fails" `
     -Description "Verify cmd fallback is attempted on deletion failure." `
     -Setup { @{ Files = @{ "winget.exe" = @{ IsReparsePoint = $false } } } } `
     -Parameters @("-Force") `
-    -Assertion { param($state, $exitCode) $state.CalledCmdlets -contains "Start-Process: cmd.exe /c del /f /q `"LocalAppData\Microsoft\WindowsApps\winget.exe`"" }
+    -Assertion { param($state, $exitCode)
+        # Match on the file name: the sandbox path can reach cmd.exe in 8.3 short form (e.g. TE2B87~1), which no
+        # fixed path string matches
+        @($state.CalledCmdlets | Where-Object { $_ -like 'Start-Process: cmd.exe /c del /f /q "*\winget.exe"' }).Count -gt 0
+    }
 
 Add-Test -Id 38 -Tier "Tier 2" -Name "WindowsApps directory missing" `
     -Description "Verify WindowsApps directory created if missing." `
@@ -1686,6 +1747,7 @@ Add-Test -Id 78 -Tier "Tier 4" -Name "Install-ActiveSetupStage locks the staging
         $readExecute = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute
         $usersRules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq 'S-1-5-32-545' })
         $exitCode -eq 0 -and
+        $state.ActiveSetup["StubPath"] -like "*Repair-WingetAlias.ps1*" -and
         $acl.AreAccessRulesProtected -and
         $usersRules.Count -eq 1 -and
         ($usersRules[0].FileSystemRights -band $writeMask) -eq 0 -and
@@ -1810,6 +1872,89 @@ Add-Test -Id 84 -Tier "Tier 4" -Name "Intune Remediation Tier 2 exits 1 when a s
         ($state.Output -join " ") -match "Error: Remediation failed"
     }
 
+Add-Test -Id 85 -Tier "Tier 4" -Name "Install-ActiveSetupStage writes Active Setup through the 64-bit registry view" `
+    -Description "Verify the Active Setup key is written through the HKLM base key (64-bit view), not an HKLM: provider path that a 32-bit host would redirect to WOW6432Node." `
+    -Setup { @{
+        TargetScript = ".\sccm\Install-ActiveSetupStage.ps1"
+        MockIsAdmin = "true"
+    } } `
+    -Parameters @("-StagingPath", "StagedTool") `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        $state.ActiveSetupInLocalMachine -and
+        $state.ActiveSetup["ComponentID"] -eq "WingetDiagnosticTool" -and
+        $state.ActiveSetup["Locale"] -eq "*" -and
+        @($state.CalledCmdlets | Where-Object { $_ -like "*Active Setup*" }).Count -eq 0
+    }
+
+Add-Test -Id 86 -Tier "Tier 4" -Name "Install-ActiveSetupStage sets the Active Setup Version from the module version" `
+    -Description "Verify the Active Setup Version is major,minor,build of the staged module's ModuleVersion, so an upgrade re-runs for users who ran an older build." `
+    -Setup { @{
+        TargetScript = ".\sccm\Install-ActiveSetupStage.ps1"
+        MockIsAdmin = "true"
+    } } `
+    -Parameters @("-StagingPath", "StagedTool") `
+    -Assertion { param($state, $exitCode, $testDir)
+        $moduleVersion = [version](Import-PowerShellDataFile -LiteralPath (Join-Path $testDir "WingetDiagnosticTool\WingetDiagnosticTool.psd1")).ModuleVersion
+        $expectedVersion = "{0},{1},{2}" -f $moduleVersion.Major, $moduleVersion.Minor, [Math]::Max($moduleVersion.Build, 0)
+        $exitCode -eq 0 -and
+        $expectedVersion -ne "1,0,0" -and
+        $state.ActiveSetup["Version"] -eq $expectedVersion
+    }
+
+Add-Test -Id 87 -Tier "Tier 4" -Name "Install-ActiveSetupStage removes an existing registration when staging fails" `
+    -Description "Verify that when the old staging folder can't be deleted (a read-only planted file), the script exits 1 and removes the existing Active Setup registration instead of leaving it pointed at that folder." `
+    -Setup { @{
+        TargetScript = ".\sccm\Install-ActiveSetupStage.ps1"
+        MockIsAdmin = "true"
+        PreStageFiles = @("StagedTool\WingetDiagnosticTool\Private\zz-planted.ps1")
+        PreStageReadOnly = $true
+        PreRegisteredActiveSetup = @{ ComponentID = "WingetDiagnosticTool"; StubPath = "old-stub"; Version = "1,0,0" }
+    } } `
+    -Parameters @("-StagingPath", "StagedTool") `
+    -Assertion { param($state, $exitCode, $testDir)
+        $exitCode -eq 1 -and
+        -not $state.ActiveSetupInLocalMachine -and
+        (Test-Path (Join-Path $testDir "StagedTool\WingetDiagnosticTool\Private\zz-planted.ps1"))
+    }
+
+Add-Test -Id 88 -Tier "Tier 4" -Name "Install-ActiveSetupStage -Uninstall removes the registration" `
+    -Description "Verify -Uninstall deletes the Active Setup key from the HKLM 64-bit view and exits 0." `
+    -Setup { @{
+        TargetScript = ".\sccm\Install-ActiveSetupStage.ps1"
+        MockIsAdmin = "true"
+        PreRegisteredActiveSetup = @{ ComponentID = "WingetDiagnosticTool"; StubPath = "old-stub"; Version = "1,0,0" }
+    } } `
+    -Parameters @("-Uninstall", "-StagingPath", "StagedTool") `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        -not $state.ActiveSetupInLocalMachine -and
+        ($state.Output -join " ") -match "Successfully removed Active Setup registry key"
+    }
+
+# Tests 89-96 run one case each from StagingSecurity.Cases.ps1 against the staging checks in
+# Install-ActiveSetupStage.ps1 (the case script loads its functions without running it). The case script
+# returns 0 when the check behaves as the case expects.
+$stagingCases = @(
+    @(89, "A", "rejects a write entry for an arbitrary user SID"),
+    @(90, "B", "rejects a staging path that is a junction"),
+    @(91, "C", "rejects a folder owned by another principal"),
+    @(92, "D", "rejects a pre-existing unprotected folder"),
+    @(93, "E", "rejects a build entry left in place"),
+    @(94, "F", "accepts a fresh locked folder"),
+    @(95, "G", "rejects a planted file"),
+    @(96, "H", "accepts a cleanly staged folder")
+)
+foreach ($stagingCase in $stagingCases) {
+    $caseId = $stagingCase[0]
+    $caseLetter = $stagingCase[1]
+    Add-Test -Id $caseId -Tier "Tier 4" -Name "Staging check $($stagingCase[2])" `
+        -Description "Run case $caseLetter of tests\StagingSecurity.Cases.ps1 against Assert-StagingSecure." `
+        -Setup { @{ TargetScript = (Join-Path $ScriptDir "StagingSecurity.Cases.ps1") } } `
+        -Parameters @("-Case", $caseLetter) `
+        -Assertion { param($state, $exitCode) $exitCode -eq 0 -and (($state.Output -join "`n") -match "; as expected") }
+}
+
 # 4. Execution loop
 if ($PSBoundParameters.ContainsKey('Id')) {
     $TestCases = @($TestCases | Where-Object { $_.Id -in $Id })
@@ -1896,12 +2041,16 @@ foreach ($tc in $TestCases) {
     }
     $setupData["Id"] = $tc.Id
 
-    # Plant files in the sandbox before the script runs (paths relative to the sandbox)
+    # Plant files in the sandbox before the script runs (paths relative to the sandbox);
+    # PreStageReadOnly marks them read-only, so a recursive .NET delete of their folder fails
     if ($setupData.PreStageFiles) {
         foreach ($relPath in $setupData.PreStageFiles) {
             $plantedPath = Join-Path $testDir $relPath
             New-Item -ItemType Directory -Path (Split-Path -Parent $plantedPath) -Force | Out-Null
             [System.IO.File]::WriteAllText($plantedPath, "planted")
+            if ($setupData.PreStageReadOnly) {
+                [System.IO.File]::SetAttributes($plantedPath, [System.IO.FileAttributes]::ReadOnly)
+            }
         }
     }
 
@@ -1916,7 +2065,7 @@ foreach ($tc in $TestCases) {
         $argsList += $tc.Parameters
     }
     
-    $powershellExe = if ($PSVersionTable.PSVersion.Major -ge 6) { "pwsh.exe" } else { "powershell.exe" }
+    $powershellExe = "powershell.exe"
     
     # Set MOCK_IS_ADMIN and WINGET_BEHAVIOR environment variables for the child process if specified
     $isAdminVal = if ($setupData.MockIsAdmin) { $setupData.MockIsAdmin } else { "false" }

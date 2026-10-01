@@ -10,6 +10,12 @@
     (HKCU and %LOCALAPPDATA%), this script stages the repair utility locally into ProgramData
     and registers an Active Setup component in HKLM. When any user subsequently logs in,
     Windows automatically triggers the silent repair routine once within the user's interactive context.
+
+    The Active Setup key is written through the 64-bit registry view, so a 32-bit PowerShell host (the
+    default for a task sequence's Run Command Line step) does not land it under WOW6432Node. Its Version
+    follows the module version, so users who ran an older build run the repair again after an upgrade.
+    If staging fails after it has started, an existing registration is removed, so it never runs an
+    unverified folder.
 .PARAMETER StagingPath
     Destination directory where module and repair scripts are staged.
     Defaults to "$env:ProgramData\WingetDiagnosticTool".
@@ -36,7 +42,9 @@ param(
     [switch]$Force
 )
 
-$activeSetupKeyPath = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\WingetDiagnosticTool"
+# Active Setup component key, relative to HKLM, always in the 64-bit registry view.
+$activeSetupSubKey = "SOFTWARE\Microsoft\Active Setup\Installed Components\WingetDiagnosticTool"
+$activeSetupDisplayPath = "HKLM\$activeSetupSubKey (64-bit view)"
 
 function Test-IsElevated {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -52,6 +60,51 @@ $script:SidUsers = 'S-1-5-32-545'
 $script:SidCurrent = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 # PowerShell 7 reaches the ACL APIs through FileSystemAclExtensions; Windows PowerShell 5.1 has them on the types.
 $script:AclExtensions = 'System.IO.FileSystemAclExtensions' -as [type]
+
+function Get-LocalMachineKey {
+    # HKLM root in the 64-bit view. Under the test runner (IsTestRunner set) its in-memory MockRegistry is used so
+    # tests never touch the real registry; outside it, a type that happens to be named MockRegistry is ignored.
+    $mockRegistry = if ($env:IsTestRunner -eq "true") { 'MockRegistry' -as [type] } else { $null }
+    if ($mockRegistry) {
+        return $mockRegistry::LocalMachine
+    }
+    return [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
+}
+
+function Test-ActiveSetupRegistered {
+    $key = (Get-LocalMachineKey).OpenSubKey($activeSetupSubKey)
+    if ($key) {
+        $key.Close()
+        return $true
+    }
+    return $false
+}
+
+function Remove-ActiveSetupRegistration {
+    # Deletes the Active Setup component key. Returns $true if a key was removed.
+    [OutputType([bool])]
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param()
+
+    if (-not (Test-ActiveSetupRegistered)) {
+        return $false
+    }
+    if ($PSCmdlet.ShouldProcess($activeSetupDisplayPath, "Remove Active Setup registration")) {
+        (Get-LocalMachineKey).DeleteSubKeyTree($activeSetupSubKey, $false)
+        return $true
+    }
+    return $false
+}
+
+function Get-ActiveSetupVersion {
+    # Active Setup runs StubPath again for a user whose recorded Version is lower than this one,
+    # so the Version follows the module version (major,minor,build).
+    param([Parameter(Mandatory = $true)][string]$ManifestPath)
+
+    $moduleVersion = [version](Import-PowerShellDataFile -LiteralPath $ManifestPath).ModuleVersion
+    $build = [Math]::Max($moduleVersion.Build, 0)
+    return "{0},{1},{2}" -f $moduleVersion.Major, $moduleVersion.Minor, $build
+}
 
 function Get-StagingSecurity {
     # A protected DACL: SYSTEM and Administrators Full, Users ReadAndExecute, nothing inherited from
@@ -117,7 +170,8 @@ function Assert-StagingSecure {
     # Fails closed unless: the staging folder is a real folder (not a link) with a protected ACL;
     # every staged item is owned by SYSTEM, Administrators or the account running this script;
     # only SYSTEM and Administrators (plus -BuildSid, while files are copied) can write to any
-    # item; and the folder holds only files staged from the source.
+    # item; and the folder holds only files staged from the source. The folder itself is checked
+    # before anything inside it is listed.
     param(
         [Parameter(Mandatory = $true)][string]$StagingPath,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ExpectedRelativePaths,
@@ -131,32 +185,39 @@ function Assert-StagingSecure {
     if ($BuildSid) { $writers += $BuildSid }
     $writeMask = [System.Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
 
-    if (([System.IO.DirectoryInfo]::new($StagingPath).Attributes -band $reparse) -ne 0) {
-        throw "Staging folder is a link, not a folder: $StagingPath"
-    }
-    $items = @(Get-Item -LiteralPath $StagingPath -Force) + @(Get-ChildItem -LiteralPath $StagingPath -Recurse -Force)
-    foreach ($item in $items) {
-        if (($item.Attributes -band $reparse) -ne 0) {
-            throw "Staged item is a link: $($item.FullName)"
+    $assertItem = {
+        param([string]$Path, [System.IO.FileAttributes]$Attributes)
+        if (($Attributes -band $reparse) -ne 0) {
+            throw "Staged item is a link: $Path"
         }
-        $acl = Get-Acl -LiteralPath $item.FullName
+        $acl = Get-Acl -LiteralPath $Path
         $owner = $acl.GetOwner($sidType).Value
         if ($trustedOwners -notcontains $owner) {
-            throw "Staged item is owned by an untrusted principal ($owner): $($item.FullName)"
+            throw "Staged item is owned by an untrusted principal ($owner): $Path"
         }
         foreach ($rule in $acl.GetAccessRules($true, $true, $sidType)) {
             if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
             if (($rule.FileSystemRights -band $writeMask) -eq 0) { continue }
             if ($writers -notcontains $rule.IdentityReference.Value) {
-                throw "Principal $($rule.IdentityReference.Value) can write to staged item: $($item.FullName)"
+                throw "Principal $($rule.IdentityReference.Value) can write to staged item: $Path"
             }
         }
-    }
-    if (-not (Get-Acl -LiteralPath $StagingPath).AreAccessRulesProtected) {
-        throw "Staging folder ACL is not protected: $StagingPath"
+        return $acl
     }
 
-    $rootFull = (Get-Item -LiteralPath $StagingPath -Force).FullName.TrimEnd('\')
+    $rootInfo = [System.IO.DirectoryInfo]::new($StagingPath)
+    if (($rootInfo.Attributes -band $reparse) -ne 0) {
+        throw "Staging folder is a link, not a folder: $StagingPath"
+    }
+    $rootAcl = & $assertItem $rootInfo.FullName $rootInfo.Attributes
+    if (-not $rootAcl.AreAccessRulesProtected) {
+        throw "Staging folder ACL is not protected: $StagingPath"
+    }
+    foreach ($item in @(Get-ChildItem -LiteralPath $StagingPath -Recurse -Force)) {
+        $null = & $assertItem $item.FullName $item.Attributes
+    }
+
+    $rootFull = $rootInfo.FullName.TrimEnd('\')
     $expected = @{}
     foreach ($rel in $ExpectedRelativePaths) { $expected[$rel.ToLowerInvariant()] = $true }
     foreach ($file in @(Get-ChildItem -LiteralPath $StagingPath -Recurse -File -Force)) {
@@ -168,6 +229,7 @@ function Assert-StagingSecure {
 }
 
 $exitCode = 0
+$stagingStarted = $false
 
 try {
     if (-not (Test-IsElevated)) {
@@ -176,13 +238,12 @@ try {
     } else {
         if ($Uninstall) {
             Write-Verbose "Unregistering Active Setup component..."
-            if (Test-Path $activeSetupKeyPath) {
-                if ($PSCmdlet.ShouldProcess($activeSetupKeyPath, "Remove-Item Registry Key")) {
-                    Remove-Item -Path $activeSetupKeyPath -Force -Recurse -ErrorAction Stop
-                    Write-Output "Successfully removed Active Setup registry key: $activeSetupKeyPath"
+            if (Test-ActiveSetupRegistered) {
+                if (Remove-ActiveSetupRegistration) {
+                    Write-Output "Successfully removed Active Setup registry key: $activeSetupDisplayPath"
                 }
             } else {
-                Write-Output "Active Setup key not found: $activeSetupKeyPath"
+                Write-Output "Active Setup key not found: $activeSetupDisplayPath"
             }
 
             if (Test-Path $StagingPath) {
@@ -213,15 +274,24 @@ try {
                 throw "Source file 'Repair-WingetAlias.ps1' could not be located in '$projectRoot' or '$scriptDir'."
             }
 
+            # The module is staged with the script, and its manifest sets the Active Setup Version.
+            $sourceManifest = Join-Path $sourceModuleDir "WingetDiagnosticTool.psd1"
+            if (-not (Test-Path $sourceManifest)) {
+                throw "Module manifest '$sourceManifest' could not be located; it is staged with the script and sets the Active Setup Version."
+            }
+            $activeSetupVersion = Get-ActiveSetupVersion -ManifestPath $sourceManifest
+
             # 2. Stage files into a fresh, locked-down target location.
             # Standard users can create folders under ProgramData and own what they create, so an
             # existing staging folder is never reused: it is deleted, then recreated with a locked
             # ACL in the same call, so no other user can write to it at any point. The new folder is
             # verified before anything is copied into it (a folder another user recreated in the
             # meantime fails that check), the build entry for this account is removed after the
-            # copy, and the result is verified again. Any failure stops with exit 1.
+            # copy, and the result is verified again. Any failure stops with exit 1 and removes an
+            # existing Active Setup registration (see the catch block).
             $StagingPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($StagingPath)
             if ($PSCmdlet.ShouldProcess($StagingPath, "Stage Files With Restricted ACL")) {
+                $stagingStarted = $true
                 if ([System.IO.Directory]::Exists($StagingPath)) {
                     [System.IO.Directory]::Delete($StagingPath, $true)
                     Write-Verbose "Removed existing staging directory: $StagingPath"
@@ -232,12 +302,10 @@ try {
 
                 $expectedFiles = @("Repair-WingetAlias.ps1")
                 Copy-Item -Path $sourceRepairScript -Destination $StagingPath -Force:$Force
-                if (Test-Path $sourceModuleDir) {
-                    Copy-Item -Path $sourceModuleDir -Destination $StagingPath -Recurse -Force:$Force
-                    $moduleParent = (Get-Item -LiteralPath $sourceModuleDir).Parent.FullName.TrimEnd('\')
-                    foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceModuleDir -Recurse -File -Force)) {
-                        $expectedFiles += $sourceFile.FullName.Substring($moduleParent.Length + 1)
-                    }
+                Copy-Item -Path $sourceModuleDir -Destination $StagingPath -Recurse -Force:$Force
+                $moduleParent = (Get-Item -LiteralPath $sourceModuleDir).Parent.FullName.TrimEnd('\')
+                foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceModuleDir -Recurse -File -Force)) {
+                    $expectedFiles += $sourceFile.FullName.Substring($moduleParent.Length + 1)
                 }
 
                 Set-StagingAcl -Path $StagingPath
@@ -245,24 +313,27 @@ try {
                 Write-Output "Successfully staged WingetDiagnosticTool to: $StagingPath (ACL: SYSTEM/Administrators full, Users read-only)"
             }
 
-            # 3. Register Active Setup in HKLM
+            # 3. Register Active Setup in HKLM (64-bit view)
             $stagedScriptPath = Join-Path $StagingPath "Repair-WingetAlias.ps1"
             $powershellExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
             $stubPath = "`"$powershellExe`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$stagedScriptPath`" -Force"
 
-            if ($PSCmdlet.ShouldProcess($activeSetupKeyPath, "Register Active Setup Component")) {
-                if (-not (Test-Path $activeSetupKeyPath)) {
-                    New-Item -Path $activeSetupKeyPath -Force | Out-Null
+            if ($PSCmdlet.ShouldProcess($activeSetupDisplayPath, "Register Active Setup Component")) {
+                $hklm = Get-LocalMachineKey
+                $componentKey = $hklm.CreateSubKey($activeSetupSubKey)
+                try {
+                    $componentKey.SetValue("", "Winget Diagnostic & Repair Stub")
+                    $componentKey.SetValue("ComponentID", "WingetDiagnosticTool")
+                    $componentKey.SetValue("StubPath", $stubPath)
+                    $componentKey.SetValue("Version", $activeSetupVersion)
+                    $componentKey.SetValue("Locale", "*")
+                } finally {
+                    $componentKey.Close()
                 }
 
-                Set-ItemProperty -Path $activeSetupKeyPath -Name "(Default)" -Value "Winget Diagnostic & Repair Stub" -Force
-                Set-ItemProperty -Path $activeSetupKeyPath -Name "ComponentID" -Value "WingetDiagnosticTool" -Force
-                Set-ItemProperty -Path $activeSetupKeyPath -Name "StubPath" -Value $stubPath -Force
-                Set-ItemProperty -Path $activeSetupKeyPath -Name "Version" -Value "1,0,0" -Force
-                Set-ItemProperty -Path $activeSetupKeyPath -Name "Locale" -Value "*" -Force
-
-                Write-Output "Successfully registered Active Setup component at: $activeSetupKeyPath"
+                Write-Output "Successfully registered Active Setup component at: $activeSetupDisplayPath"
                 Write-Output "Stub command: $stubPath"
+                Write-Output "Active Setup Version: $activeSetupVersion"
             }
 
             $exitCode = 0
@@ -271,6 +342,17 @@ try {
 } catch {
     Write-Error "Failed to configure Active Setup staging: $_"
     $exitCode = 1
+    if ($stagingStarted) {
+        # The old staging folder may be gone, partly deleted or unverified, so a registration that
+        # would run it at the next logon must not stay.
+        try {
+            if (Remove-ActiveSetupRegistration -Confirm:$false) {
+                Write-Warning "Removed the existing Active Setup registration because staging failed: $activeSetupDisplayPath"
+            }
+        } catch {
+            Write-Error "Also failed to remove the existing Active Setup registration ($activeSetupDisplayPath): $_"
+        }
+    }
 }
 
 $isTestRunner = $env:IsTestRunner -eq "true" -or (Get-Variable -Name "IsTestRunner" -Scope "global" -ErrorAction SilentlyContinue).Value
