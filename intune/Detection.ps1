@@ -63,6 +63,8 @@ if (Get-Command Run-Diagnostics -ErrorAction SilentlyContinue) {
     }
 } else {
     # Tier 2: Self-contained fallback evaluation (zero external dependencies)
+    # HKCU root; the test runner substitutes its in-memory MockRegistry so tests never touch the real registry
+    $hkcu = if ('MockRegistry' -as [type]) { ('MockRegistry' -as [type])::CurrentUser } else { [Microsoft.Win32.Registry]::CurrentUser }
     $localAppData = $env:LOCALAPPDATA
     if ([string]::IsNullOrWhiteSpace($localAppData)) {
         $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
@@ -80,7 +82,7 @@ if (Get-Command Run-Diagnostics -ErrorAction SilentlyContinue) {
     }
 
     # B. User PATH check
-    $userEnvKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+    $userEnvKey = $hkcu.OpenSubKey("Environment")
     $userPath = if ($userEnvKey) { $userEnvKey.GetValue("PATH", "") } else { "" }
     if ($userEnvKey) { $userEnvKey.Close() }
 
@@ -114,7 +116,7 @@ if (Get-Command Run-Diagnostics -ErrorAction SilentlyContinue) {
 
     # D. Registry alias toggle check
     $aliasKeyPath = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe"
-    $aliasKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($aliasKeyPath)
+    $aliasKey = $hkcu.OpenSubKey($aliasKeyPath)
     if ($aliasKey) {
         $stateVal = $aliasKey.GetValue("State", $null)
         $aliasKey.Close()
