@@ -1,0 +1,29 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run E2E Test Suite (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run tests/Run-Tests.ps1
+        shell: powershell
+        run: |
+          # The runner's step wrapper sets ErrorActionPreference to Stop; the suite reports failures itself
+          $ErrorActionPreference = 'Continue'
+          & .\tests\Run-Tests.ps1
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "E2E test suite failed."
+              exit 1
+          }

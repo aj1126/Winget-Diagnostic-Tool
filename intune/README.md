@@ -69,7 +69,7 @@ Both scripts emit standardized exit codes and formatted `STDOUT` telemetry captu
 
 ## 🛡️ Enterprise Safety & Security Safeguards
 
-- **Strict Read-Only Detection**: `Detection.ps1` performs zero filesystem or registry mutations.
+- **Detection Makes No Repairs**: `Detection.ps1` changes no registry values, alias files or `PATH` entries. It is not fully read-only: with the module present (Tier 1) it writes its log to `%LOCALAPPDATA%\WingetDiagnosticTool\Repair-WingetAlias.log`, and if a winget probe opens the "Open With" dialog it force-stops every running `OpenWith` process it has the rights to stop, not only the one the probe opened.
 - **SYSTEM Context Guard**: Both scripts actively detect if accidentally run as `NT AUTHORITY\SYSTEM` and immediately emit a helpful configuration error rather than falsely modifying system hives.
 - **Non-Blocking 3-Second Probe**: Prevents the infamous "Open With" GUI dialog loop from hanging the Intune Management Extension process.
 - **Non-Destructive Repairs**: Low-level .NET deletions target only non-reparse point corrupted stub files, safely leaving valid NTFS junction points intact.

@@ -37,6 +37,17 @@ jobs:
           
           Write-Host "Static code analysis passed cleanly (0 Errors, 0 Warnings)." -ForegroundColor Green
 
+      - name: Run E2E Test Suite (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          # The runner's step wrapper sets ErrorActionPreference to Stop; the suite reports failures itself
+          $ErrorActionPreference = 'Continue'
+          & .\tests\Run-Tests.ps1
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "E2E test suite failed. Aborting pipeline."
+              exit 1
+          }
+
       - name: Compile Release Notes
         shell: pwsh
         run: |
@@ -47,8 +58,8 @@ jobs:
           A safe, automated diagnostic and remediation engine designed to resolve `winget` execution loop issues, repair corrupted AppInstaller execution alias reparse points, and fix registry `PATH` environment variables.
           
           ### Automated Verification Verdict
-          - **Static Code Analysis**: :white_check_mark: 100% Passing `PSScriptAnalyzer` (0 Errors, 0 Warnings)
-          - **Automated E2E Test Suite**: :white_check_mark: 60/60 E2E Test Cases Passed successfully on Windows environment
+          - **Static Code Analysis**: :white_check_mark: `PSScriptAnalyzer` reports 0 errors and 0 warnings on `Repair-WingetAlias.ps1`
+          - **Automated E2E Test Suite**: :white_check_mark: The full suite (`tests/Run-Tests.ps1`, Windows PowerShell 5.1) passed on this tag's commit before this release was created
           
           ### Quick-Run Invocation
           To execute the diagnostic and repair tool immediately with a process-level execution policy bypass, run the following command in an administrative PowerShell console:

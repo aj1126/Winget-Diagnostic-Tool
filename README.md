@@ -78,5 +78,5 @@ If you are looking for the original technical deep dives, architectural breakdow
 
 ## 🧪 Vetting Status
 
-* **PSScriptAnalyzer Lint Compliance:** 100% Pass (0 Errors, 0 Warnings)
-* **Integration Tests:** 77 / 77 E2E Edge Cases Passed across Windows PowerShell 5.1 and PS 7+
+* **PSScriptAnalyzer Lint Compliance:** 0 errors and 0 warnings on `Repair-WingetAlias.ps1`, checked on every pull request (`lint.yml`)
+* **Integration Tests:** the full E2E suite (`tests/Run-Tests.ps1`, Windows PowerShell 5.1 only) runs on every pull request (`tests.yml`) and must pass before a release is published (`release.yml`)
