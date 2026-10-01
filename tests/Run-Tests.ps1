@@ -1671,6 +1671,30 @@ Add-Test -Id 77 -Tier "Tier 4" -Name "Install-ActiveSetupStage on non-elevated s
         $exitCode -eq 1 -and ($null -ne $state)
     }
 
+Add-Test -Id 78 -Tier "Tier 4" -Name "Install-ActiveSetupStage locks the staging folder" `
+    -Description "Verify that staging replaces a pre-existing folder (removing a planted file), disables ACL inheritance, and leaves Users read-only." `
+    -Setup { @{
+        TargetScript = ".\sccm\Install-ActiveSetupStage.ps1"
+        MockIsAdmin = "true"
+        PreStageFiles = @("StagedTool\WingetDiagnosticTool\Private\zz-planted.ps1")
+    } } `
+    -Parameters @("-StagingPath", "StagedTool") `
+    -Assertion { param($state, $exitCode, $testDir)
+        $staged = Join-Path $testDir "StagedTool"
+        $acl = Get-Acl -LiteralPath $staged
+        $writeMask = [System.Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
+        $readExecute = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute
+        $usersRules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq 'S-1-5-32-545' })
+        $exitCode -eq 0 -and
+        $acl.AreAccessRulesProtected -and
+        $usersRules.Count -eq 1 -and
+        ($usersRules[0].FileSystemRights -band $writeMask) -eq 0 -and
+        ($usersRules[0].FileSystemRights -band $readExecute) -eq $readExecute -and
+        -not (Test-Path (Join-Path $staged "WingetDiagnosticTool\Private\zz-planted.ps1")) -and
+        (Test-Path (Join-Path $staged "Repair-WingetAlias.ps1")) -and
+        (Test-Path (Join-Path $staged "WingetDiagnosticTool\WingetDiagnosticTool.psm1"))
+    }
+
 # 4. Execution loop
 if ($PSBoundParameters.ContainsKey('Id')) {
     $TestCases = @($TestCases | Where-Object { $_.Id -in $Id })
@@ -1695,6 +1719,8 @@ foreach ($tc in $TestCases) {
     $testDirName = "TestCase_$($tc.Id)"
     $testDir = Join-Path $globalTemp $testDirName
     if (Test-Path $testDir) {
+        # A staging test leaves a protected ACL; the owner can always reset it
+        & icacls.exe $testDir /reset /T /C /Q | Out-Null
         Remove-Item -Path $testDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     New-Item -ItemType Directory -Path $testDir -Force | Out-Null
@@ -1739,6 +1765,15 @@ foreach ($tc in $TestCases) {
         $setupData = @{}
     }
     $setupData["Id"] = $tc.Id
+
+    # Plant files in the sandbox before the script runs (paths relative to the sandbox)
+    if ($setupData.PreStageFiles) {
+        foreach ($relPath in $setupData.PreStageFiles) {
+            $plantedPath = Join-Path $testDir $relPath
+            New-Item -ItemType Directory -Path (Split-Path -Parent $plantedPath) -Force | Out-Null
+            [System.IO.File]::WriteAllText($plantedPath, "planted")
+        }
+    }
 
     $setupData | ConvertTo-Json -Depth 5 | Out-File -FilePath (Join-Path $testDir "setup.json") -Encoding utf8
     
@@ -1847,6 +1882,7 @@ function Convert-PSCustomObjectToHashtable {
         $passedCount++
         $results += [PSCustomObject]@{ Id = $tc.Id; Name = $tc.Name; Tier = $tc.Tier; Status = "PASS"; Message = "" }
         if (Test-Path $testDir) {
+            & icacls.exe $testDir /reset /T /C /Q | Out-Null
             Remove-Item -Path $testDir -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
         }
     } else {
