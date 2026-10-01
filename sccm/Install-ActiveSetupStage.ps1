@@ -82,6 +82,7 @@ function Test-ActiveSetupRegistered {
 
 function Remove-ActiveSetupRegistration {
     # Deletes the Active Setup component key. Returns $true if a key was removed.
+    [OutputType([bool])]
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
 
