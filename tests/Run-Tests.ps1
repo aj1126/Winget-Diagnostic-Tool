@@ -1695,6 +1695,121 @@ Add-Test -Id 78 -Tier "Tier 4" -Name "Install-ActiveSetupStage locks the staging
         (Test-Path (Join-Path $staged "WingetDiagnosticTool\WingetDiagnosticTool.psm1"))
     }
 
+# Tier 2 (standalone) coverage for the intune scripts: NoModule removes the module folder from the sandbox
+$tier2HealthyPackages = @(
+    @{
+        Name = "Microsoft.DesktopAppInstaller"
+        PackageFullName = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe_x64__8wekyb3d8bbwe"
+        InstallLocation = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+        Version = "1.22.11261.0"
+        Status = "Ok"
+    }
+)
+
+Add-Test -Id 79 -Tier "Tier 4" -Name "Intune Detection Tier 2 on healthy system" `
+    -Description "Verify that Detection.ps1 without the module (Tier 2) outputs Compliant and exits 0 on a healthy endpoint." `
+    -Setup { @{
+        TargetScript = ".\intune\Detection.ps1"
+        NoModule = $true
+        Registry = @{ PATH = "%LOCALAPPDATA%\Microsoft\WindowsApps" }
+        AppxPackages = $tier2HealthyPackages
+        AliasSettings = @{ "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 } }
+        Files = @{ "winget.exe" = @{ IsReparsePoint = $true } }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode, $testDir)
+        $exitCode -eq 0 -and
+        ($state.Output -join " ") -match "Compliant" -and
+        -not (Test-Path (Join-Path $testDir "WingetDiagnosticTool")) -and
+        -not (Test-Path (Join-Path $testDir "LocalAppData\WingetDiagnosticTool\Repair-WingetAlias.log"))
+    }
+
+Add-Test -Id 80 -Tier "Tier 4" -Name "Intune Detection Tier 2 on disabled alias" `
+    -Description "Verify that Detection.ps1 without the module (Tier 2) outputs Non-compliant and exits 1 when alias State = 0." `
+    -Setup { @{
+        TargetScript = ".\intune\Detection.ps1"
+        NoModule = $true
+        AliasSettings = @{ "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 0 } }
+        Files = @{ "winget.exe" = @{ IsReparsePoint = $true } }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode, $testDir)
+        $exitCode -eq 1 -and
+        ($state.Output -join " ") -match "Non-compliant" -and
+        -not (Test-Path (Join-Path $testDir "LocalAppData\WingetDiagnosticTool\Repair-WingetAlias.log"))
+    }
+
+Add-Test -Id 81 -Tier "Tier 4" -Name "Intune Remediation Tier 2 on degraded alias and corrupted stub" `
+    -Description "Verify that Remediation.ps1 without the module (Tier 2) sets alias State to 1, removes the corrupted stub, and exits 0." `
+    -Setup { @{
+        TargetScript = ".\intune\Remediation.ps1"
+        NoModule = $true
+        Registry = @{ PATH = "%LOCALAPPDATA%\Microsoft\WindowsApps" }
+        AppxPackages = $tier2HealthyPackages
+        AliasSettings = @{ "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 0 } }
+        Files = @{ "winget.exe" = @{ IsReparsePoint = $false } }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        ($state.Output -join " ") -match "Module not present" -and
+        $state.AliasSettings["Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe"].State -eq 1 -and
+        ($state.Output -join " ") -match "Success"
+    }
+
+Add-Test -Id 82 -Tier "Tier 4" -Name "Intune Remediation Tier 2 on missing WindowsApps in User PATH" `
+    -Description "Verify that Remediation.ps1 without the module (Tier 2) appends WindowsApps to the User PATH and exits 0." `
+    -Setup { @{
+        TargetScript = ".\intune\Remediation.ps1"
+        NoModule = $true
+        Registry = @{ PATH = "C:\Windows;C:\Windows\System32" }
+        AppxPackages = $tier2HealthyPackages
+        AliasSettings = @{ "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 } }
+        Files = @{ "winget.exe" = @{ IsReparsePoint = $true } }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 0 -and
+        ($state.Output -join " ") -match "Module not present" -and
+        $state.Registry.PATH -like "*WindowsApps*" -and
+        ($state.Output -join " ") -match "Success"
+    }
+
+Add-Test -Id 83 -Tier "Tier 4" -Name "Intune Remediation exits 1 when every repair step fails" `
+    -Description "Verify that Remediation.ps1 (Tier 1) reports failure, not Success, when all five repair cmdlets throw and winget still fails." `
+    -Setup { @{
+        TargetScript = ".\intune\Remediation.ps1"
+        StubModule = $true
+        WingetBehavior = "fail"
+        Registry = @{ PATH = "%LOCALAPPDATA%\Microsoft\WindowsApps" }
+        AliasSettings = @{ "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 } }
+        Files = @{ "winget.exe" = @{ IsReparsePoint = $true } }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 1 -and
+        ($state.Output -join " ") -match "Initiating WingetDiagnosticTool module remediation" -and
+        ($state.Output -join " ") -match "Error: Remediation failed"
+    }
+
+Add-Test -Id 84 -Tier "Tier 4" -Name "Intune Remediation Tier 2 exits 1 when a stub can't be removed and the probe fails" `
+    -Description "Verify that Remediation.ps1 without the module (Tier 2) reports failure when the corrupted stub survives and winget still fails." `
+    -Setup { @{
+        TargetScript = ".\intune\Remediation.ps1"
+        NoModule = $true
+        WingetBehavior = "fail"
+        Registry = @{ PATH = "%LOCALAPPDATA%\Microsoft\WindowsApps" }
+        AppxPackages = $tier2HealthyPackages
+        AliasSettings = @{ "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe" = @{ State = 1 } }
+        Files = @{ "winget.exe" = @{ IsReparsePoint = $false; IsReadOnly = $true } }
+    } } `
+    -Parameters @() `
+    -Assertion { param($state, $exitCode)
+        $exitCode -eq 1 -and
+        ($state.Output -join " ") -match "Module not present" -and
+        ($state.Output -join " ") -match "Error: Remediation failed"
+    }
+
 # 4. Execution loop
 if ($PSBoundParameters.ContainsKey('Id')) {
     $TestCases = @($TestCases | Where-Object { $_.Id -in $Id })
@@ -1746,6 +1861,21 @@ foreach ($tc in $TestCases) {
     
     # Evaluate setup
     $setupData = & $tc.Setup
+
+    # NoModule: remove the module folder so the intune scripts take Tier 2 (the standalone path)
+    if ($setupData -and $setupData.NoModule) {
+        Remove-Item -Path (Join-Path $testDir "WingetDiagnosticTool") -Recurse -Force
+    }
+
+    # StubModule: replace the module with one whose five repair functions all throw (Tier 1 failure path)
+    if ($setupData -and $setupData.StubModule) {
+        $stubModuleDir = Join-Path $testDir "WingetDiagnosticTool"
+        Remove-Item -Path $stubModuleDir -Recurse -Force
+        New-Item -ItemType Directory -Path $stubModuleDir -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $stubModuleDir "WingetDiagnosticTool.psd1"), "@{ RootModule = 'WingetDiagnosticTool.psm1'; ModuleVersion = '0.0.1'; FunctionsToExport = '*' }")
+        $stubFunctions = @('Repair-EnvironmentPath', 'Repair-AppExecutionAliases', 'Repair-AliasStubs', 'Repair-ShadowingFiles', 'Repair-AppXInstallerPackage')
+        [System.IO.File]::WriteAllText((Join-Path $stubModuleDir "WingetDiagnosticTool.psm1"), (($stubFunctions | ForEach-Object { "function $_ { throw 'simulated failure' }" }) -join "`r`n"))
+    }
     
     # For test 54 specifically, let's create the backup file in setupData's virtual disk
     # Setup test-specific logs and redundant backups in redirected DiagnosticDataDir

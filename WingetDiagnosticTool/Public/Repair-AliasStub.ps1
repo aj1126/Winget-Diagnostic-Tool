@@ -26,6 +26,7 @@ function Repair-AliasStub {
     $pkg = Get-TargetAppxPackage -Name "Microsoft.DesktopAppInstaller"
     $aliases = Get-DeclaredExecutionAliases -pkg $pkg
 
+    $allRemoved = $true
     foreach ($alias in $aliases) {
         $aliasPath = Join-Path $dirPath $alias
         $exists = [System.IO.File]::Exists($aliasPath)
@@ -40,12 +41,16 @@ function Repair-AliasStub {
 
             if (-not $isReparse) {
                 Write-Log -Message "Corrupted stub file found at $aliasPath (Not a reparse point). Removing..." -Level "Warn"
-                Remove-ReparsePoint -Path $aliasPath
+                $null = Remove-ReparsePoint -Path $aliasPath
+                if ($script:FileClass::Exists($aliasPath)) {
+                    Write-Log -Message "Corrupted stub at $aliasPath could not be removed." -Level "Error"
+                    $allRemoved = $false
+                }
             }
         }
     }
 
-    return $true
+    return $allRemoved
 }
 
 Set-Alias -Name Repair-AliasStubs -Value Repair-AliasStub -Description "Plural alias for Repair-AliasStub"

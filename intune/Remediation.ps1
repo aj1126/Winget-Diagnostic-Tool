@@ -43,6 +43,7 @@ if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
         if ($pRes) { $remediationLog.Add("Repaired User environment PATH") }
     } catch {
         $remediationLog.Add("PATH repair error: $_")
+        $success = $false
     }
 
     # Step B: Registry Execution Alias
@@ -51,14 +52,21 @@ if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
         if ($aRes) { $remediationLog.Add("Repaired AppExecutionAlias registry settings") }
     } catch {
         $remediationLog.Add("Alias registry repair error: $_")
+        $success = $false
     }
 
     # Step C: Corrupted alias stubs
     try {
         $sRes = Repair-AliasStubs
-        if ($sRes) { $remediationLog.Add("Cleaned corrupted alias stubs") }
+        if ($sRes) {
+            $remediationLog.Add("Cleaned corrupted alias stubs")
+        } else {
+            $remediationLog.Add("Stub cleanup error: a corrupted alias stub could not be removed")
+            $success = $false
+        }
     } catch {
         $remediationLog.Add("Stub cleanup error: $_")
+        $success = $false
     }
 
     # Step D: Shadowing files
@@ -67,6 +75,7 @@ if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
         if ($shRes) { $remediationLog.Add("Cleaned shadowing files") }
     } catch {
         $remediationLog.Add("Shadowing file cleanup error: $_")
+        $success = $false
     }
 
     # Step E: AppX Registration
@@ -75,9 +84,12 @@ if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
         if ($pkgRes) { $remediationLog.Add("Re-registered DesktopAppInstaller AppX package") }
     } catch {
         $remediationLog.Add("AppX registration error: $_")
+        $success = $false
     }
 } else {
     # Tier 2: Self-contained fallback remediation (zero external dependencies)
+    # HKCU root; the test runner substitutes its in-memory MockRegistry so tests never touch the real registry
+    $hkcu = if ('MockRegistry' -as [type]) { ('MockRegistry' -as [type])::CurrentUser } else { [Microsoft.Win32.Registry]::CurrentUser }
     Write-Output "Module not present. Initiating self-contained fallback remediation..."
     $localAppData = $env:LOCALAPPDATA
     if ([string]::IsNullOrWhiteSpace($localAppData)) {
@@ -103,7 +115,7 @@ if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
 
     # Step B: Repair User PATH in HKCU:\Environment
     try {
-        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+        $envKey = $hkcu.OpenSubKey("Environment", $true)
         if ($envKey) {
             $userPath = $envKey.GetValue("PATH", "")
             $foundInUserPath = $false
@@ -124,14 +136,15 @@ if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
         }
     } catch {
         $remediationLog.Add("Failed to update User PATH: $_")
+        $success = $false
     }
 
     # Step C: Re-enable AppExecutionAlias in Registry (State = 1)
     try {
         $subKeyPath = "Software\Microsoft\Windows\CurrentVersion\AppX\AppExecutionAliasSettings\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\winget.exe"
-        $aliasKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subKeyPath, $true)
+        $aliasKey = $hkcu.OpenSubKey($subKeyPath, $true)
         if ($null -eq $aliasKey) {
-            $aliasKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($subKeyPath)
+            $aliasKey = $hkcu.CreateSubKey($subKeyPath)
         }
         if ($aliasKey) {
             $aliasKey.SetValue("State", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
@@ -140,6 +153,7 @@ if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
         }
     } catch {
         $remediationLog.Add("Failed to set alias registry setting: $_")
+        $success = $false
     }
 
     # Step D: Delete corrupted stub file if not a reparse point
@@ -153,6 +167,7 @@ if (Get-Command Repair-AppExecutionAliases -ErrorAction SilentlyContinue) {
             }
         } catch {
             $remediationLog.Add("Failed to delete corrupted stub: $_")
+            $success = $false
         }
     }
 
